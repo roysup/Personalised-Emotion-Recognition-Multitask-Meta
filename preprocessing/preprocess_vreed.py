@@ -1,6 +1,3 @@
-"""
-VREED dataset preprocessing pipeline
-"""
 # Import libraries
 import os
 import random
@@ -13,8 +10,9 @@ import pickle
 from glob import glob
 from datetime import datetime
 from collections import OrderedDict
+#from tqdm import tqdm
 
-# Load DAT files
+### Load DAT files
 path = kagglehub.dataset_download("lumaatabbaa/vr-eyes-emotions-dataset-vreed")
 dat_directory = os.path.join(path, '05 ECG-GSR Data', '01 ECG-GSR Data (Pre-Processed)')
 dat_files = [f for f in os.listdir(dat_directory) if f.endswith('.dat')]
@@ -28,7 +26,9 @@ for file_name in dat_files:
         'ID': file_name.split('_')[0],
         'Data': file_data
     })
+
 df = pd.DataFrame(data_list)
+df
 
 # for index, row in df.iterrows():
 #     participant_id = row['ID']
@@ -37,24 +37,27 @@ df = pd.DataFrame(data_list)
 #     for i, arr in enumerate(arrays):
 #         print(f"  Array {i + 1}: {arr.shape[0]} records")
 
-# Load Ratings
+### Load Ratings
 excel_file = os.path.join(path, '03 Self-Reported Questionnaires', '02 Post Exposure Ratings.xlsx')
 labels_df = pd.read_excel(excel_file)
+labels_df
 
 # Define custom order clearly
 custom_order = ['Baseline', 'JNG', 'PRS', 'BRZ', 'RST', 'DST', 'EXR','BNS', 'BOT', 'RFS', 'RPW', 'TNT', 'ZMZ']
-#              [4,           1,     2,     0,     1,     0,    3,     1,     2,     2,     0,     3
-
+#               [4,           1,     2,     0,     1,     0,    3,     1,     2,     2,     0,     3
 # This order was determined by first looking at the number of timestamps for each subject and trial as above in the DAT files in dat_directory = os.path.join(path, '05 ECG-GSR Data', '01 ECG-GSR Data (Pre-Processed)').
-# It was found that the DAT files for each participant were in the same order aside for Participants 118, 130, 101 who had skipped some videos.
-# These timestamps were divided by sampling rate (2KHz) to obtain the duration of the DAT files.
-# This duration was then cross referenced with the NOTED video stimuli durations, to figure the close and order.
+# It was found that the DAT files for each participant were in the same order aside for Participants 118, 130, 101 who had not watched some videos altogether.
+# Then these timestamps were divided by 2000 (sampling rate) to obtain the duration of the DAT files.
+# This duration was then cross referenced with the NOTED video stimuli durations, to figure the close  and order.
 # The order was also cross referenced with the 'Labels' column in the DAT files to make sure the category was correlated.
 # There were some uncertainities however intra-label, for eg JNG and BNS had similar number of timetsamps, TNT, ZMD also not clear so it might be worth checking the results with them interchanged.
 
-# Sort labels
+# Sort labels clearly
 labels_df['Str_Code'] = pd.Categorical(labels_df['Str_Code'], custom_order, ordered=True)
 labels_df = labels_df.sort_values(['ID', 'Str_Code'])
+
+# Convert categorical to string before aggregation
+labels_df['Str_Code'] = labels_df['Str_Code'].astype(str)
 
 # Aggregate labels clearly with baseline
 labels_aggregated = labels_df.groupby('ID').agg({
@@ -66,14 +69,16 @@ labels_aggregated = labels_df.groupby('ID').agg({
 
 labels_aggregated
 
-# Ensure IDs are strings for merging 
+### Merge
+# Ensure IDs are strings for merging clearly
 labels_aggregated['ID'] = labels_aggregated['ID'].astype(str)
 df['ID'] = df['ID'].astype(str)
 
-# Merge labels and DAT data 
+# Merge labels and DAT data clearly
 df = pd.merge(df, labels_aggregated, on='ID', how='left')
+df
 
-# Update 'Data' dictionaries 
+# Update 'Data' dictionaries clearly
 def update_data_dict(row):
     row['Data'].update({
         'POST_Valence': row['POST_Valence'],
@@ -84,11 +89,15 @@ def update_data_dict(row):
     return row['Data']
 
 df['Data'] = df.apply(update_data_dict, axis=1)
+df
 
-# Drop redundant columns 
+# Drop redundant columns clearly
 df.drop(columns=['POST_Valence', 'POST_Arousal', 'Str_Code', 'Num_Code'], inplace=True)
+df
 
-# Prepare exploded data
+### Explode Data
+
+# Prepare exploded data (efficient method)
 expanded_rows = []
 
 for _, row in df.iterrows():
@@ -100,7 +109,21 @@ for _, row in df.iterrows():
     )):
         if label == 4:
             continue  # Skip baseline clearly here
-        for point in data_array:
+
+        # for point in data_array:
+        #     expanded_rows.append({
+        #         'ID': int(row['ID']),
+        #         'Label': label,
+        #         'GSR': point[0],
+        #         'ECG': point[1],
+        #         'POST_Valence': v,
+        #         'POST_Arousal': a,
+        #         'Str_Code': s,
+        #         'Num_Code': n,
+        #         'trial': trial_idx
+        #     })
+        
+        for point in data_array[::8]:   # downsample BEFORE expanding
             expanded_rows.append({
                 'ID': int(row['ID']),
                 'Label': label,
@@ -114,15 +137,18 @@ for _, row in df.iterrows():
             })
 
 exploded_df = pd.DataFrame(expanded_rows)
+exploded_df
 
-# Exclude IDs
+### Exclude IDs
 
 ids_to_drop = [101, 102, 103, 115, 118, 119, 121, 130]
-# 130, 118, 101 dropped as they did not complete trials, but the rest were dropped based on analysis of extracted features (paper did not mention which ones but dropped these ones)
+#130, 118, 101 dropped as they did not complete trials, but the rest were dropped based on analysis of extracted features (paper did not mention which ones but dropped these ones)
 exploded_df = exploded_df[~exploded_df['ID'].isin(ids_to_drop)]
 exploded_df = exploded_df.reset_index(drop=True)
+exploded_df
 
-# Label Encode
+### Label Encode
+
 from sklearn.preprocessing import LabelEncoder
 
 # Add the combined 'ID_trial' column
@@ -144,6 +170,7 @@ exploded_df['VA'] = pd.to_numeric(exploded_df['POST_Valence'], errors='coerce')
 exploded_df['VA_Rating'] = exploded_df['VA'].apply(lambda x: 1 if x >= 5 else 0)
 
 exploded_df.reset_index(drop=True, inplace=True)
+exploded_df
 
 # Count the number of occurrences of each unique value in the 'VA_Rating' column
 va_rating_counts = exploded_df['VA_Rating'].value_counts()
@@ -155,27 +182,35 @@ ar_rating_counts = exploded_df['AR_Rating'].value_counts()
 percentage_zeros = (ar_rating_counts[0] / exploded_df['AR_Rating'].count()) * 100
 print(ar_rating_counts, percentage_zeros)
 
-# # Define the downsample function
+### Downsample
+
+# Define the downsample function
 # def downsample_data(df, factor):
 #     # Keep every 'factor'-th data point
 #     return data[::factor]
 
-# Apply the downsample function to GSR and ECG for each ID_trial
-downsampled_data = exploded_df.groupby('participant_trial_encoded').apply(lambda x: x.iloc[::8, :])
+# # Apply the downsample function to GSR and ECG for each ID_trial
+# downsampled_data = exploded_df.groupby('participant_trial_encoded').apply(lambda x: x.iloc[::8, :])
 
-# Reset the index to maintain a clean DataFrame structure
-downsampled_data = downsampled_data.reset_index(drop=True)
+# # Reset the index to maintain a clean DataFrame structure
+# downsampled_data = downsampled_data.reset_index(drop=True)
+# downsampled_data
+
 # Drop columns
+downsampled_data = exploded_df
 columns_to_drop = ['Unnamed: 0', 'Label', 'trial', 'POST_Valence', 'POST_Arousal']
 downsampled_data = downsampled_data.drop(columns=columns_to_drop, errors='ignore')
 downsampled_data = downsampled_data.sort_values(['ID', 'Num_Code']) # for MTL and STL only
 downsampled_data = downsampled_data.reset_index(drop=True)
+downsampled_data
 
-# Range Check
+### Range Check
+
 print(f"ECG Range: {downsampled_data['ECG'].min()} - {downsampled_data['ECG'].max()}")
 print(f"GSR Range: {downsampled_data['GSR'].min()} - {downsampled_data['GSR'].max()}")
 
 ### Scale
+
 from sklearn.preprocessing import StandardScaler
 
 def scale_columns(group):
@@ -184,18 +219,25 @@ def scale_columns(group):
     return group
 
 df = downsampled_data.groupby('ID').apply(scale_columns).reset_index(drop=True)
+df
 
-# Class balance
+### Class balance
+
 # Count the number of occurrences of each unique value in the 'VA_Rating' column
 va_rating_counts = df['VA_Rating'].value_counts()
+
 # Calculate the percentage of '0' values in the 'VA_Rating' column
 percentage_zeros = (va_rating_counts[0] / df['VA_Rating'].count()) * 100
+
 print(va_rating_counts)
 print(percentage_zeros)
+
 # Count the number of occurrences of each unique value in the 'VA_Rating' column
 ar_rating_counts = df['AR_Rating'].value_counts()
+
 # Calculate the percentage of '0' values in the 'VA_Rating' column
 percentage_zeros = (ar_rating_counts[0] / df['AR_Rating'].count()) * 100
+
 print(ar_rating_counts)
 print(percentage_zeros)
 
@@ -226,10 +268,10 @@ sns.barplot(x=ar_rating_counts.index.astype(str), y=ar_rating_counts.values, pal
 plt.title(f'AR_Rating Distribution\n0s: {ar_zero_pct:.2f}%')
 plt.xlabel('AR_Rating')
 plt.ylabel('Count')
+
 plt.tight_layout()
 plt.show()
 
-# Save the processed dataset to a CSV file
 #df.to_csv('/content/drive/MyDrive/Phase A/data/VREED_data_v2.csv', index=False)
 output_path = "data/processed/vreed_processed.csv"
 df.to_csv(output_path, index=False)
