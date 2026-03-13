@@ -1,8 +1,7 @@
 """
-MTL PCGrad — Projected Conflicting Gradients
-Same HPS architecture. Per-task gradients on shared params are projected
-to remove conflicting components before being averaged and applied.
-Task-head gradients come from the normal backward pass.
+MTL Hard Parameter Sharing (HPS)
+Shared CNN+LSTM backbone, task-specific dense heads per participant.
+Separate AR and VA models trained sequentially.
 Seed is reset before AR training and again before VA training.
 """
 import os
@@ -30,9 +29,10 @@ NUM_TASKS  = 26
 SHARED_LR  = 3e-4
 TASK_LR    = 1e-4
 L2_TASK    = 1e-5
+L2_SHARED  = 0.0
 
 BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
-OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_hps_pcgrad_results')
+OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_hps_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -45,73 +45,14 @@ df = load_vreed_df()
 
 
 # =============================
-# PCGRAD
-# =============================
-def _pcgrad_project(grad_list):
-    """
-    Project gradient vectors to remove pairwise conflicting components.
-    For each (i, j) pair: if dot(gi, gj) < 0 subtract the projection of gi onto gj.
-    Returns the mean of projected gradients.
-    """
-    grads = [g.clone() for g in grad_list]
-    for i in range(len(grads)):
-        for j in range(len(grads)):
-            if i == j:
-                continue
-            dot   = torch.dot(grads[i], grads[j])
-            denom = torch.dot(grads[j], grads[j])
-            if dot < 0 and denom > 0:
-                grads[i] = grads[i] - (dot / denom) * grads[j]
-    return torch.mean(torch.stack(grads), dim=0)
-
-
-def _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids, l2_task):
-    """
-    1. Compute per-task losses on shared params only (autograd.grad, no backward).
-    2. Project gradients via PCGrad.
-    3. Zero all grads, run standard .backward() for the task heads.
-    4. Overwrite shared param grads with projected values.
-    5. Return total loss (for scheduler and NaN check).
-    """
-    shared_params = model.shared_parameters()
-    unique_tasks  = torch.unique(task_ids)
-
-    task_grads = []
-    for t in unique_tasks:
-        mask   = (task_ids == t)
-        loss_t = loss_fn(model(X_b, task_ids), y_b)[mask].mean()
-        grads  = torch.autograd.grad(
-            loss_t, shared_params,
-            retain_graph=True, create_graph=False, allow_unused=True)
-        flat = []
-        for p, g in zip(shared_params, grads):
-            flat.append(g.contiguous().view(-1) if g is not None
-                        else torch.zeros_like(p).view(-1))
-        task_grads.append(torch.cat(flat))
-
-    projected = _pcgrad_project(task_grads)
-
-    total_loss = loss_fn(model(X_b, task_ids), y_b).mean()
-    l2_reg     = l2_task * sum(p.norm(2)**2 for p in model.task_specific_parameters()
-                               if p.requires_grad)
-    total = total_loss + l2_reg
-    total.backward()
-
-    offset = 0
-    for p in shared_params:
-        n = p.numel()
-        if p.grad is None:
-            p.grad = torch.zeros_like(p)
-        p.grad.copy_(projected[offset: offset + n].view_as(p))
-        offset += n
-
-    return total
-
-
-# =============================
 # HELPERS
 # =============================
-def _train_pcgrad(label_type, lr_shared, lr_task, l2_task, train_data_dict):
+def _l2_task_only(model):
+    return L2_TASK * sum(p.norm(2)**2 for p in model.task_specific_parameters()
+                         if p.requires_grad)
+
+
+def _train_mtl(label_type, lr_shared, lr_task, l2_fn, train_data_dict):
     loader, _, _ = make_combined_mtl_loader(
         train_data_dict, WINDOW_SIZE, STRIDE,
         label_type=label_type, batch_size=BATCH_SIZE,
@@ -125,19 +66,19 @@ def _train_pcgrad(label_type, lr_shared, lr_task, l2_task, train_data_dict):
     sched     = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.1, patience=3)
     loss_fn   = nn.BCEWithLogitsLoss(reduction='none')
     best_loss = float('inf')
-    ckpt_path = os.path.join(OUTPUT_DIR, f'best_model_{label_type}_hps_pcgrad.pt')
+    ckpt_path = os.path.join(OUTPUT_DIR, f'best_model_{label_type}_hps_tuned.pt')
 
     for epoch in range(EPOCHS):
         model.train()
         running = 0.0
         for batch in loader:
             X_b, y_b, task_ids, _ = [b.to(device) for b in batch]
-            opt.zero_grad(set_to_none=True)
-            total = _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids, l2_task)
-
+            opt.zero_grad()
+            loss  = loss_fn(model(X_b, task_ids), y_b).mean()
+            total = loss + l2_fn(model)
             if torch.isnan(total):
                 raise ValueError(f"NaN at epoch {epoch+1} [{label_type.upper()}]")
-
+            total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step()
             running += total.item()
@@ -198,12 +139,12 @@ def _evaluate_all(model_ar, model_va, test_data_dict):
 # =============================
 # HYPERPARAMETER TUNING
 # =============================
-def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas):
-    print(f"\n{'='*60}\nHYPERPARAMETER TUNING  [{label_type.upper()}]  MTL-PCGrad\n{'='*60}")
+def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
+    print(f"\n{'='*60}\nHYPERPARAMETER TUNING  [{label_type.upper()}]  MTL-HPS\n{'='*60}")
     all_results = []
     for sh_lr in shared_lrs:
         for tk_lr in task_lrs:
-            for l2 in l2_lambdas:
+            for l2 in l2_lambdas_task:
                 fold_f1s = []
                 for fold_i in range(N_FOLDS):
                     train_data, val_data = {}, {}
@@ -220,8 +161,8 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas):
                         label_type=label_type, batch_size=BATCH_SIZE,
                         num_tasks=NUM_TASKS, seed=SEED)
 
-                    model   = MTLModel(NUM_TASKS).to(device)
-                    opt     = optim.Adam([
+                    model = MTLModel(NUM_TASKS).to(device)
+                    opt   = optim.Adam([
                         {'params': model.shared_parameters(),        'lr': sh_lr},
                         {'params': model.task_specific_parameters(), 'lr': tk_lr},
                     ])
@@ -233,8 +174,12 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas):
                         run = 0.0
                         for batch in loader:
                             X_b, y_b, tids, _ = [b.to(device) for b in batch]
-                            opt.zero_grad(set_to_none=True)
-                            total = _apply_pcgrad(model, loss_fn, X_b, y_b, tids, l2)
+                            opt.zero_grad()
+                            total = (loss_fn(model(X_b, tids), y_b).mean() +
+                                     l2 * sum(p.norm(2)**2
+                                              for p in model.task_specific_parameters()
+                                              if p.requires_grad))
+                            total.backward()
                             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
                             opt.step(); run += total.item()
                         sched.step(run / len(loader))
@@ -261,7 +206,7 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas):
                     f1 = 2*p*r/(p+r+1e-7)
                     fold_f1s.append(f1)
                     print(f"  fold {fold_i+1}: f1={f1:.4f}  "
-                          f"(sh={sh_lr},tk={tk_lr},l2={l2})")
+                          f"(sh_lr={sh_lr}, tk_lr={tk_lr}, l2={l2})")
 
                 avg = np.mean(fold_f1s)
                 all_results.append({'sh_lr': sh_lr, 'tk_lr': tk_lr, 'l2': l2,
@@ -280,8 +225,8 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas):
 # MAIN
 # =============================
 if __name__ == '__main__':
-    bsh_ar, btk_ar, bl2_ar = hyperparameter_tuning('ar', [SHARED_LR], [TASK_LR], [L2_TASK])
-    bsh_va, btk_va, bl2_va = hyperparameter_tuning('va', [SHARED_LR], [TASK_LR], [L2_TASK])
+    best_sh_ar, best_tk_ar, best_l2_ar = hyperparameter_tuning('ar', [SHARED_LR], [TASK_LR], [L2_TASK])
+    best_sh_va, best_tk_va, best_l2_va = hyperparameter_tuning('va', [SHARED_LR], [TASK_LR], [L2_TASK])
 
     train_data, test_data = {}, {}
     for task_idx, pid in enumerate(participant_ids):
@@ -291,11 +236,11 @@ if __name__ == '__main__':
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
-    model_ar = _train_pcgrad('ar', bsh_ar, btk_ar, bl2_ar, train_data)
+    model_ar = _train_mtl('ar', best_sh_ar, best_tk_ar, _l2_task_only, train_data)
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
-    model_va = _train_pcgrad('va', bsh_va, btk_va, bl2_va, train_data)
+    model_va = _train_mtl('va', best_sh_va, best_tk_va, _l2_task_only, train_data)
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = _evaluate_all(model_ar, model_va, test_data)
@@ -303,10 +248,10 @@ if __name__ == '__main__':
 
     results_df, ar_stds, va_stds = save_all_results(
         results, agg, OUTPUT_DIR,
-        method_name='MTL-PCGrad',
-        misclassification_csv='VREED_hps_pcgrad_misclassification_rates.csv')
+        method_name='MTL-HPS',
+        misclassification_csv='VREED_hps_misclassification_rates.csv')
 
-    with open(os.path.join(OUTPUT_DIR, 'hps_pcgrad_results.pkl'), 'wb') as f:
+    with open(os.path.join(OUTPUT_DIR, 'hps_tuned_results.pkl'), 'wb') as f:
         pickle.dump({**agg, 'per_participant': results,
                      'per_participant_table': results_df,
                      **ar_stds, **va_stds}, f)

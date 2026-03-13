@@ -1,5 +1,5 @@
 venv/
-data/
+dataset_configs/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/

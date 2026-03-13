@@ -13,67 +13,66 @@ from sklearn.metrics import roc_auc_score, roc_curve, auc, confusion_matrix
 # REPRODUCIBILITY
 # =============================
 
-# def set_all_seeds(seed: int = 42):
-#     random.seed(seed)
-#     np.random.seed(seed)
-#     torch.manual_seed(seed)
-#     if torch.cuda.is_available():
-#         torch.cuda.manual_seed(seed)
-#         torch.cuda.manual_seed_all(seed)
-#     torch.backends.cudnn.enabled = True
-#     torch.backends.cudnn.deterministic = True
-#     torch.backends.cudnn.benchmark = False
-#     torch.backends.cuda.matmul.allow_tf32 = False
-#     torch.backends.cudnn.allow_tf32 = False
-#     torch.use_deterministic_algorithms(True)
-
+def set_all_seeds(seed: int = 42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.enabled = True
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.use_deterministic_algorithms(True)
 
 # =============================
 # METRICS
 # =============================
 
-# def safe_roc_auc(y_true, y_score):
-#     """Return (auc, fpr, tpr) or (nan, None, None) if only one class present."""
-#     if len(np.unique(y_true)) < 2:
-#         return np.nan, None, None
-#     fpr, tpr, _ = roc_curve(y_true, y_score)
-#     return auc(fpr, tpr), fpr, tpr
+def safe_roc_auc(y_true, y_score):
+    """Return (auc, fpr, tpr) or (nan, None, None) if only one class present."""
+    if len(np.unique(y_true)) < 2:
+        return np.nan, None, None
+    fpr, tpr, _ = roc_curve(y_true, y_score)
+    return auc(fpr, tpr), fpr, tpr
 
 
-# def compute_metrics_from_cm(cm):
-#     """
-#     From a 2x2 confusion matrix return (accuracy, macro_precision, macro_recall, macro_f1).
-#     Convention: cm[0,0]=TN, cm[0,1]=FP, cm[1,0]=FN, cm[1,1]=TP.
-#     """
-#     tn, fp, fn, tp = cm.ravel()
+def compute_metrics_from_cm(cm):
+    """
+    From a 2x2 confusion matrix return (accuracy, macro_precision, macro_recall, macro_f1).
+    Convention: cm[0,0]=TN, cm[0,1]=FP, cm[1,0]=FN, cm[1,1]=TP.
+    """
+    tn, fp, fn, tp = cm.ravel()
 
-#     accuracy = (tp + tn) / (tp + tn + fp + fn)
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
 
-#     precision_0 = tn / (tn + fn) if (tn + fn) > 0 else 0.0
-#     precision_1 = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-#     macro_precision = (precision_0 + precision_1) / 2
+    precision_0 = tn / (tn + fn) if (tn + fn) > 0 else 0.0
+    precision_1 = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    macro_precision = (precision_0 + precision_1) / 2
 
-#     recall_0 = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-#     recall_1 = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-#     macro_recall = (recall_0 + recall_1) / 2
+    recall_0 = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    recall_1 = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    macro_recall = (recall_0 + recall_1) / 2
 
-#     f1_0 = (2 * precision_0 * recall_0 / (precision_0 + recall_0)
-#             if (precision_0 + recall_0) > 0 else 0.0)
-#     f1_1 = (2 * precision_1 * recall_1 / (precision_1 + recall_1)
-#             if (precision_1 + recall_1) > 0 else 0.0)
-#     macro_f1 = (f1_0 + f1_1) / 2
+    f1_0 = (2 * precision_0 * recall_0 / (precision_0 + recall_0)
+            if (precision_0 + recall_0) > 0 else 0.0)
+    f1_1 = (2 * precision_1 * recall_1 / (precision_1 + recall_1)
+            if (precision_1 + recall_1) > 0 else 0.0)
+    macro_f1 = (f1_0 + f1_1) / 2
 
-#     return accuracy, macro_precision, macro_recall, macro_f1
+    return accuracy, macro_precision, macro_recall, macro_f1
 
 
-# def print_metrics_detailed(label, acc, precision, recall, f1, auc_score=None):
-#     print(f'\n--- {label} ---')
-#     print(f'  Accuracy:         {acc:.4f}')
-#     print(f'  Macro Precision:  {precision:.4f}')
-#     print(f'  Macro Recall:     {recall:.4f}')
-#     print(f'  Macro F1:         {f1:.4f}')
-#     if auc_score is not None:
-#         print(f'  AUC:              {auc_score:.4f}')
+def print_metrics_detailed(label, acc, precision, recall, f1, auc_score=None):
+    print(f'\n--- {label} ---')
+    print(f'  Accuracy:         {acc:.4f}')
+    print(f'  Macro Precision:  {precision:.4f}')
+    print(f'  Macro Recall:     {recall:.4f}')
+    print(f'  Macro F1:         {f1:.4f}')
+    if auc_score is not None:
+        print(f'  AUC:              {auc_score:.4f}')
 
 
 # =============================

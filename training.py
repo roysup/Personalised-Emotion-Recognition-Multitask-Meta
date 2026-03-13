@@ -1,0 +1,457 @@
+import os
+import numpy as np
+import torch
+import torch.nn as nn
+from sklearn.metrics import confusion_matrix
+
+from utils import compute_metrics_from_cm, safe_roc_auc
+
+
+# =============================
+# GENERIC TRAINING LOOP
+# =============================
+
+def train_model(model, train_loader, optimizer, scheduler,
+                epochs, max_norm, l2_fn, device,
+                label='', checkpoint_path=None,
+                grad_modifier=None, seed_fn=None):
+    """
+    Generic training loop shared by all model types.
+
+    Parameters
+    ----------
+    model            : nn.Module
+    train_loader     : DataLoader — batches of (X, y, task_ids [, trial_ids])
+    optimizer        : torch Optimizer
+    scheduler        : LR scheduler (ReduceLROnPlateau)
+    epochs           : int
+    max_norm         : float — gradient clip norm
+    l2_fn            : callable(model) -> scalar tensor — returns L2 reg term,
+                       or None for no regularisation
+    device           : torch.device
+    label            : str — printed in progress lines
+    checkpoint_path  : str or None — saves model at best train loss if provided
+    grad_modifier    : callable(optimizer, per_task_losses, shared_params) -> None
+                       for PCGrad; if None uses standard backward
+    seed_fn          : callable() -> None — called once before the loop starts
+                       (pass set_all_seeds(SEED) as a lambda)
+
+    Returns
+    -------
+    history : dict {'train_loss': [...]}
+    """
+    if seed_fn is not None:
+        seed_fn()
+
+    loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+    best_loss = float('inf')
+    history = {'train_loss': []}
+
+    for epoch in range(epochs):
+        model.train()
+        running_loss = 0.0
+
+        for batch in train_loader:
+            # Unpack — loaders may yield 3 or 4 tensors
+            X_batch = batch[0].to(device)
+            y_batch = batch[1].to(device)
+            task_ids = batch[2].to(device) if len(batch) > 2 else None
+
+            optimizer.zero_grad(set_to_none=True)
+
+            if task_ids is not None:
+                outputs = model(X_batch, task_ids)
+            else:
+                outputs = model(X_batch)
+
+            per_sample_loss = loss_fn(outputs, y_batch).squeeze(-1)
+
+            if grad_modifier is not None:
+                # PCGrad path: caller supplies the modifier
+                grad_modifier(optimizer, per_sample_loss, task_ids, outputs)
+                total_loss = per_sample_loss.mean()
+                if l2_fn is not None:
+                    total_loss = total_loss + l2_fn(model)
+                total_loss.backward()
+            else:
+                total_loss = per_sample_loss.mean()
+                if l2_fn is not None:
+                    total_loss = total_loss + l2_fn(model)
+                total_loss.backward()
+
+            if torch.isnan(total_loss):
+                raise ValueError(f"NaN loss at epoch {epoch + 1} [{label}]")
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+            optimizer.step()
+            running_loss += total_loss.item()
+
+        avg_loss = running_loss / max(len(train_loader), 1)
+        history['train_loss'].append(avg_loss)
+        scheduler.step(avg_loss)
+
+        if (epoch + 1) % 5 == 0 or epoch == 0:
+            print(f"  [{label}] Epoch {epoch+1}/{epochs}  loss={avg_loss:.4f}")
+
+        if checkpoint_path is not None and avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), checkpoint_path)
+
+    return history
+
+
+# =============================
+# UNCERTAINTY-WEIGHTED TRAINING LOOP
+# =============================
+
+def train_model_uw(model, train_loader, optimizer, scheduler,
+                   epochs, max_norm, l2_fn, device,
+                   label='', checkpoint_path=None, seed_fn=None):
+    """
+    Variant of train_model for uncertainty-weighted MTL.
+    The model must expose a `log_vars` parameter (nn.Parameter of shape [num_tasks]).
+    """
+    if seed_fn is not None:
+        seed_fn()
+
+    loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+    best_loss = float('inf')
+    history = {'train_loss': []}
+
+    for epoch in range(epochs):
+        model.train()
+        running_loss = 0.0
+
+        for batch in train_loader:
+            X_batch  = batch[0].to(device)
+            y_batch  = batch[1].to(device)
+            task_ids = batch[2].to(device)
+
+            if len(torch.unique(task_ids)) != model.num_tasks:
+                raise ValueError(
+                    f"Batch missing tasks: found {len(torch.unique(task_ids))}, "
+                    f"expected {model.num_tasks}")
+
+            optimizer.zero_grad(set_to_none=True)
+
+            outputs          = model(X_batch, task_ids)
+            per_sample_loss  = loss_fn(outputs, y_batch).squeeze(-1)
+            log_vars         = model.log_vars[task_ids]
+            precision        = torch.exp(-log_vars)
+            weighted_loss    = (precision * per_sample_loss + log_vars).mean()
+
+            if l2_fn is not None:
+                weighted_loss = weighted_loss + l2_fn(model)
+
+            if torch.isnan(weighted_loss):
+                raise ValueError(f"NaN loss at epoch {epoch + 1} [{label}]")
+
+            weighted_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+            optimizer.step()
+            running_loss += weighted_loss.item()
+
+        avg_loss = running_loss / max(len(train_loader), 1)
+        history['train_loss'].append(avg_loss)
+        scheduler.step(avg_loss)
+
+        if (epoch + 1) % 5 == 0 or epoch == 0:
+            print(f"  [{label}] Epoch {epoch+1}/{epochs}  loss={avg_loss:.4f}")
+
+        if checkpoint_path is not None and avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), checkpoint_path)
+            print(f"    Checkpoint saved (epoch {epoch+1})")
+
+    return history
+
+
+# =============================
+# PCGRAD GRADIENT MODIFIER
+# =============================
+
+def _pcgrad_project(grad_list):
+    """Project gradients to remove conflicting components."""
+    grads = grad_list.copy()
+    for i in range(len(grads)):
+        for j in range(len(grads)):
+            if i == j:
+                continue
+            dot  = torch.dot(grads[i], grads[j])
+            denom = torch.dot(grads[j], grads[j])
+            if dot < 0 and denom > 0:
+                grads[i] = grads[i] - (dot / denom) * grads[j]
+    return torch.mean(torch.stack(grads), dim=0)
+
+
+def make_pcgrad_modifier(shared_params):
+    """
+    Returns a grad_modifier compatible with train_model's signature.
+    Computes per-task gradients on shared_params, projects them,
+    then overwrites shared_params.grad after the caller's .backward().
+    """
+    def modifier(optimizer, per_sample_loss, task_ids, outputs):
+        unique_tasks = torch.unique(task_ids)
+        task_grads   = []
+        for t in unique_tasks:
+            mask   = (task_ids == t)
+            loss_t = per_sample_loss[mask].mean()
+            optimizer.zero_grad(set_to_none=True)
+            grads = torch.autograd.grad(
+                loss_t, shared_params,
+                retain_graph=True, create_graph=False, allow_unused=True)
+            flat = []
+            for p, g in zip(shared_params, grads):
+                flat.append(g.contiguous().view(-1) if g is not None
+                            else torch.zeros_like(p).view(-1))
+            task_grads.append(torch.cat(flat))
+
+        projected = _pcgrad_project(task_grads)
+
+        # Will be applied after caller calls .backward() in train_model
+        # Store on a side-channel so train_model can apply it post-backward.
+        modifier._projected = projected
+        modifier._params    = shared_params
+
+    def post_backward_hook():
+        if hasattr(modifier, '_projected'):
+            offset = 0
+            for p in modifier._params:
+                n = p.numel()
+                if p.grad is None:
+                    p.grad = torch.zeros_like(p)
+                p.grad.copy_(modifier._projected[offset: offset + n].view_as(p))
+                offset += n
+
+    modifier.post_backward = post_backward_hook
+    return modifier
+
+
+# =============================
+# EVALUATION
+# =============================
+
+def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
+                             participant_ids, device, is_mtl=False):
+    """
+    Run inference over per-participant test loaders and collect results.
+
+    Parameters
+    ----------
+    model            : nn.Module (for STL pass a dict {task_idx: (model_ar, model_va)})
+    test_loaders_ar  : dict {task_idx: DataLoader}
+    test_loaders_va  : dict {task_idx: DataLoader}
+    participant_ids  : list of participant IDs indexed by task_idx
+    device           : torch.device
+    is_mtl           : bool — if True, model(X, task_ids) is called;
+                       if False, model(X) is called.
+                       For STL pass is_mtl=False and model as a 2-tuple (model_ar, model_va).
+
+    Returns
+    -------
+    results : list of dicts, one per participant
+    """
+    results = []
+
+    # Normalise model argument
+    if isinstance(model, tuple):
+        # STL: (model_ar, model_va)
+        model_ar, model_va = model
+        model_ar.eval()
+        model_va.eval()
+        use_pair = True
+    elif isinstance(model, dict):
+        # STL per-participant models: {task_idx: (model_ar, model_va)}
+        use_pair = False
+        use_dict = True
+    else:
+        model.eval()
+        use_pair = False
+        use_dict = False
+
+    with torch.no_grad():
+        for task_idx in sorted(test_loaders_ar.keys()):
+            loader_ar = test_loaders_ar.get(task_idx)
+            loader_va = test_loaders_va.get(task_idx)
+            if loader_ar is None or loader_va is None:
+                continue
+
+            # Resolve models
+            if use_pair:
+                m_ar, m_va = model_ar, model_va
+            elif use_dict:
+                m_ar, m_va = model[task_idx]
+                m_ar.eval(); m_va.eval()
+            else:
+                m_ar = m_va = model
+
+            y_true_ar, y_pred_ar, y_probs_ar = [], [], []
+            y_true_va, y_pred_va, y_probs_va = [], [], []
+
+            for batch_ar, batch_va in zip(loader_ar, loader_va):
+                X_ar = batch_ar[0].to(device)
+                y_ar = batch_ar[1]
+                X_va = batch_va[0].to(device)
+                y_va = batch_va[1]
+
+                if is_mtl:
+                    tids_ar = batch_ar[2].to(device)
+                    tids_va = batch_va[2].to(device)
+                    out_ar  = m_ar(X_ar, tids_ar)
+                    out_va  = m_va(X_va, tids_va)
+                else:
+                    out_ar = m_ar(X_ar)
+                    out_va = m_va(X_va)
+
+                prob_ar = torch.sigmoid(out_ar).cpu().numpy().flatten()
+                prob_va = torch.sigmoid(out_va).cpu().numpy().flatten()
+
+                y_true_ar.extend(y_ar.int().numpy().flatten())
+                y_pred_ar.extend((prob_ar > 0.5).astype(int))
+                y_probs_ar.extend(prob_ar)
+
+                y_true_va.extend(y_va.int().numpy().flatten())
+                y_pred_va.extend((prob_va > 0.5).astype(int))
+                y_probs_va.extend(prob_va)
+
+            y_true_ar = np.array(y_true_ar);  y_pred_ar = np.array(y_pred_ar)
+            y_probs_ar= np.array(y_probs_ar)
+            y_true_va = np.array(y_true_va);  y_pred_va = np.array(y_pred_va)
+            y_probs_va= np.array(y_probs_va)
+
+            cm_ar = confusion_matrix(y_true_ar, y_pred_ar, labels=[0, 1])
+            cm_va = confusion_matrix(y_true_va, y_pred_va, labels=[0, 1])
+
+            ar_acc, ar_prec, ar_rec, ar_f1 = compute_metrics_from_cm(cm_ar)
+            va_acc, va_prec, va_rec, va_f1 = compute_metrics_from_cm(cm_va)
+
+            pid = participant_ids[task_idx]
+            print(f"  Participant {pid}: "
+                  f"AR acc={ar_acc:.4f} f1={ar_f1:.4f} | "
+                  f"VA acc={va_acc:.4f} f1={va_f1:.4f}")
+
+            results.append({
+                'task_idx':        task_idx,
+                'participant_id':  pid,
+                'cm_ar':           cm_ar,
+                'cm_va':           cm_va,
+                'ar_acc':          ar_acc,
+                'ar_precision':    ar_prec,
+                'ar_recall':       ar_rec,
+                'ar_f1':           ar_f1,
+                'va_acc':          va_acc,
+                'va_precision':    va_prec,
+                'va_recall':       va_rec,
+                'va_f1':           va_f1,
+                'y_true_ar':       y_true_ar,
+                'y_pred_ar':       y_pred_ar,
+                'y_pred_probs_ar': y_probs_ar,
+                'y_true_va':       y_true_va,
+                'y_pred_va':       y_pred_va,
+                'y_pred_probs_va': y_probs_va,
+            })
+
+    return results
+
+
+def aggregate_results(results):
+    """
+    Concatenate per-participant arrays and compute aggregate confusion matrix + metrics.
+
+    Returns
+    -------
+    dict with keys: cm_ar, cm_va, ar_acc/precision/recall/f1, va_*, auc_ar, auc_va,
+                    fpr_ar, tpr_ar, fpr_va, tpr_va
+    """
+    all_true_ar  = np.concatenate([r['y_true_ar']       for r in results])
+    all_pred_ar  = np.concatenate([r['y_pred_ar']       for r in results])
+    all_probs_ar = np.concatenate([r['y_pred_probs_ar'] for r in results])
+    all_true_va  = np.concatenate([r['y_true_va']       for r in results])
+    all_pred_va  = np.concatenate([r['y_pred_va']       for r in results])
+    all_probs_va = np.concatenate([r['y_pred_probs_va'] for r in results])
+
+    cm_ar = confusion_matrix(all_true_ar, all_pred_ar, labels=[0, 1])
+    cm_va = confusion_matrix(all_true_va, all_pred_va, labels=[0, 1])
+
+    ar_acc, ar_prec, ar_rec, ar_f1 = compute_metrics_from_cm(cm_ar)
+    va_acc, va_prec, va_rec, va_f1 = compute_metrics_from_cm(cm_va)
+
+    auc_ar, fpr_ar, tpr_ar = safe_roc_auc(all_true_ar, all_probs_ar)
+    auc_va, fpr_va, tpr_va = safe_roc_auc(all_true_va, all_probs_va)
+
+    return {
+        'cm_ar':        cm_ar,       'cm_va':        cm_va,
+        'ar_acc':       ar_acc,      'va_acc':       va_acc,
+        'ar_precision': ar_prec,     'va_precision': va_prec,
+        'ar_recall':    ar_rec,      'va_recall':    va_rec,
+        'ar_f1':        ar_f1,       'va_f1':        va_f1,
+        'ar_auc':       auc_ar,      'va_auc':       auc_va,
+        'fpr_ar':       fpr_ar,      'tpr_ar':       tpr_ar,
+        'fpr_va':       fpr_va,      'tpr_va':       tpr_va,
+    }
+
+
+# =============================
+# SAVE ALL RESULTS
+# =============================
+
+def save_all_results(results, agg, output_dir, method_name, misclassification_csv):
+    """
+    Save the full results bundle produced by any MTL/MTML training script.
+
+    Parameters
+    ----------
+    results              : list of per-participant result dicts
+    agg                  : dict returned by aggregate_results()
+    output_dir           : str — directory to write all files into
+    method_name          : str — used in plot titles, e.g. 'MTL-HPS'
+    misclassification_csv: str — filename only (not full path), e.g.
+                           'VREED_hps_misclassification_rates.csv'
+
+    Writes
+    ------
+    per_participant_results.csv
+    <misclassification_csv>
+    ar_cm.png, va_cm.png
+    ar_roc.png, va_roc.png
+    (pickle saving is left to the caller because the pkl filename and any
+     extra keys vary per script)
+    """
+    import os
+    from utils import (save_misclassification_rates, build_results_table,
+                       compute_per_participant_stds, print_determinism_summary,
+                       print_metrics_detailed, save_confusion_matrix_plot,
+                       save_roc_plot)
+
+    save_misclassification_rates(
+        results, [r['participant_id'] for r in results],
+        os.path.join(output_dir, misclassification_csv))
+
+    results_df = build_results_table(results)
+    results_df.to_csv(os.path.join(output_dir, 'per_participant_results.csv'), index=False)
+    print(results_df.to_string(index=False))
+
+    ar_stds = compute_per_participant_stds(results, 'ar')
+    va_stds = compute_per_participant_stds(results, 'va')
+
+    save_confusion_matrix_plot(
+        agg['cm_ar'], f'AR Confusion Matrix ({method_name})',
+        os.path.join(output_dir, 'ar_cm.png'))
+    save_confusion_matrix_plot(
+        agg['cm_va'], f'VA Confusion Matrix ({method_name})',
+        os.path.join(output_dir, 'va_cm.png'), cmap='Greens')
+    save_roc_plot(agg['fpr_ar'], agg['tpr_ar'], agg['ar_auc'],
+                  f'ROC AR ({method_name})', os.path.join(output_dir, 'ar_roc.png'))
+    save_roc_plot(agg['fpr_va'], agg['tpr_va'], agg['va_auc'],
+                  f'ROC VA ({method_name})', os.path.join(output_dir, 'va_roc.png'))
+
+    print_metrics_detailed('AR', agg['ar_acc'], agg['ar_precision'],
+                           agg['ar_recall'], agg['ar_f1'], agg['ar_auc'])
+    print_metrics_detailed('VA', agg['va_acc'], agg['va_precision'],
+                           agg['va_recall'], agg['va_f1'], agg['va_auc'])
+    print_determinism_summary(
+        {f'ar_{k}': agg[f'ar_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
+        {f'va_{k}': agg[f'va_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
+        ar_stds, va_stds)
+
+    return results_df, ar_stds, va_stds
