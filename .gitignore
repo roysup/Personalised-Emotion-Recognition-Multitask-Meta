@@ -1,5 +1,6 @@
 venv/
 datasets/data/
 __pycache__/
+repo_structure.txt
 *.pyc
 .ipynb_checkpoints/
