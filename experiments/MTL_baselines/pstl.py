@@ -4,7 +4,6 @@ One model trained on all participants pooled together, separately for AR and VA.
 """
 import os
 import sys
-#sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # CHECK
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))       # for config, data, models, utils, training
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))  # for dataset_configs.vreed
@@ -50,12 +49,6 @@ _test_set  = {f"{pid}_{vid}" for pid in HARDCODED_SPLITS
 
 train_df = df[df['participant_trial_encoded'].isin(_train_set)].reset_index(drop=True)
 test_df  = df[df['participant_trial_encoded'].isin(_test_set)].reset_index(drop=True)
-
-# train_df = train_df.rename(columns={'participant_trial_encoded': 'Trial'})
-# test_df  = test_df.rename(columns={'participant_trial_encoded': 'Trial'})
-
-# train_df['Trial'] = train_df['participant_trial_encoded']
-# test_df['Trial']  = test_df['participant_trial_encoded']
 
 train_df = train_df.drop(columns=['Trial']).rename(columns={'participant_trial_encoded': 'Trial'})
 test_df  = test_df.drop(columns=['Trial']).rename(columns={'participant_trial_encoded': 'Trial'})
