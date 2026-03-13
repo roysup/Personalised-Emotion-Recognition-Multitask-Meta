@@ -202,90 +202,90 @@ def _evaluate_all(model_ar, model_va, test_data_dict):
 # =============================
 # HYPERPARAMETER TUNING
 # =============================
-def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas):
-    print(f"\n{'='*60}\nHYPERPARAMETER TUNING  [{label_type.upper()}]  MTL-PCGrad\n{'='*60}")
-    all_results = []
-    for sh_lr in shared_lrs:
-        for tk_lr in task_lrs:
-            for l2 in l2_lambdas:
-                fold_f1s = []
-                for fold_i in range(N_FOLDS):
-                    train_data, val_data = {}, {}
-                    for task_idx, pid in enumerate(participant_ids):
-                        p_df = df[df['ID'] == pid].reset_index(drop=True)
-                        folds = create_kfold_splits(HARDCODED_SPLITS[pid]['train'], N_FOLDS)
-                        tr_v, va_v = folds[fold_i]
-                        train_data[task_idx] = p_df[p_df['Trial'].isin(tr_v)].reset_index(drop=True)
-                        val_data[task_idx]   = p_df[p_df['Trial'].isin(va_v)].reset_index(drop=True)
+# def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas):
+#     print(f"\n{'='*60}\nHYPERPARAMETER TUNING  [{label_type.upper()}]  MTL-PCGrad\n{'='*60}")
+#     all_results = []
+#     for sh_lr in shared_lrs:
+#         for tk_lr in task_lrs:
+#             for l2 in l2_lambdas:
+#                 fold_f1s = []
+#                 for fold_i in range(N_FOLDS):
+#                     train_data, val_data = {}, {}
+#                     for task_idx, pid in enumerate(participant_ids):
+#                         p_df = df[df['ID'] == pid].reset_index(drop=True)
+#                         folds = create_kfold_splits(HARDCODED_SPLITS[pid]['train'], N_FOLDS)
+#                         tr_v, va_v = folds[fold_i]
+#                         train_data[task_idx] = p_df[p_df['Trial'].isin(tr_v)].reset_index(drop=True)
+#                         val_data[task_idx]   = p_df[p_df['Trial'].isin(va_v)].reset_index(drop=True)
 
-                    set_all_seeds(SEED)
-                    loader, _, _ = make_combined_mtl_loader(
-                        train_data, WINDOW_SIZE, STRIDE,
-                        label_type=label_type, batch_size=BATCH_SIZE,
-                        num_tasks=NUM_TASKS, seed=SEED)
+#                     set_all_seeds(SEED)
+#                     loader, _, _ = make_combined_mtl_loader(
+#                         train_data, WINDOW_SIZE, STRIDE,
+#                         label_type=label_type, batch_size=BATCH_SIZE,
+#                         num_tasks=NUM_TASKS, seed=SEED)
 
-                    model   = MTLModel(NUM_TASKS).to(device)
-                    opt     = optim.Adam([
-                        {'params': model.shared_parameters(),        'lr': sh_lr},
-                        {'params': model.task_specific_parameters(), 'lr': tk_lr},
-                    ])
-                    sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
-                    loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+#                     model   = MTLModel(NUM_TASKS).to(device)
+#                     opt     = optim.Adam([
+#                         {'params': model.shared_parameters(),        'lr': sh_lr},
+#                         {'params': model.task_specific_parameters(), 'lr': tk_lr},
+#                     ])
+#                     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
+#                     loss_fn = nn.BCEWithLogitsLoss(reduction='none')
 
-                    for _ in range(EPOCHS):
-                        model.train()
-                        run = 0.0
-                        for batch in loader:
-                            X_b, y_b, tids, _ = [b.to(device) for b in batch]
-                            opt.zero_grad(set_to_none=True)
-                            total = _apply_pcgrad(model, loss_fn, X_b, y_b, tids, l2)
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
-                            opt.step(); run += total.item()
-                        sched.step(run / len(loader))
+#                     for _ in range(EPOCHS):
+#                         model.train()
+#                         run = 0.0
+#                         for batch in loader:
+#                             X_b, y_b, tids, _ = [b.to(device) for b in batch]
+#                             opt.zero_grad(set_to_none=True)
+#                             total = _apply_pcgrad(model, loss_fn, X_b, y_b, tids, l2)
+#                             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
+#                             opt.step(); run += total.item()
+#                         sched.step(run / len(loader))
 
-                    tp = fp = fn = 0
-                    model.eval()
-                    with torch.no_grad():
-                        for task_idx, val_df in val_data.items():
-                            if len(val_df) == 0: continue
-                            X_v, y_ar_v, y_va_v, _, _ = create_sliding_windows(
-                                val_df, WINDOW_SIZE, STRIDE, task_id=task_idx)
-                            if len(X_v) == 0: continue
-                            y_v   = torch.tensor(
-                                y_ar_v if label_type == 'ar' else y_va_v,
-                                dtype=torch.float32).unsqueeze(1)
-                            X_vt  = torch.tensor(X_v, dtype=torch.float32).to(device)
-                            tids  = torch.full((len(X_v),), task_idx, dtype=torch.long).to(device)
-                            pred  = (torch.sigmoid(model(X_vt, tids)) > 0.5).float().cpu()
-                            tp   += (y_v * pred).sum().item()
-                            fp   += ((1-y_v)*pred).sum().item()
-                            fn   += (y_v*(1-pred)).sum().item()
+#                     tp = fp = fn = 0
+#                     model.eval()
+#                     with torch.no_grad():
+#                         for task_idx, val_df in val_data.items():
+#                             if len(val_df) == 0: continue
+#                             X_v, y_ar_v, y_va_v, _, _ = create_sliding_windows(
+#                                 val_df, WINDOW_SIZE, STRIDE, task_id=task_idx)
+#                             if len(X_v) == 0: continue
+#                             y_v   = torch.tensor(
+#                                 y_ar_v if label_type == 'ar' else y_va_v,
+#                                 dtype=torch.float32).unsqueeze(1)
+#                             X_vt  = torch.tensor(X_v, dtype=torch.float32).to(device)
+#                             tids  = torch.full((len(X_v),), task_idx, dtype=torch.long).to(device)
+#                             pred  = (torch.sigmoid(model(X_vt, tids)) > 0.5).float().cpu()
+#                             tp   += (y_v * pred).sum().item()
+#                             fp   += ((1-y_v)*pred).sum().item()
+#                             fn   += (y_v*(1-pred)).sum().item()
 
-                    p = tp/(tp+fp+1e-7); r = tp/(tp+fn+1e-7)
-                    f1 = 2*p*r/(p+r+1e-7)
-                    fold_f1s.append(f1)
-                    print(f"  fold {fold_i+1}: f1={f1:.4f}  "
-                          f"(sh={sh_lr},tk={tk_lr},l2={l2})")
+#                     p = tp/(tp+fp+1e-7); r = tp/(tp+fn+1e-7)
+#                     f1 = 2*p*r/(p+r+1e-7)
+#                     fold_f1s.append(f1)
+#                     print(f"  fold {fold_i+1}: f1={f1:.4f}  "
+#                           f"(sh={sh_lr},tk={tk_lr},l2={l2})")
 
-                avg = np.mean(fold_f1s)
-                all_results.append({'sh_lr': sh_lr, 'tk_lr': tk_lr, 'l2': l2,
-                                    'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
-                print(f"  avg f1={avg:.4f}")
+#                 avg = np.mean(fold_f1s)
+#                 all_results.append({'sh_lr': sh_lr, 'tk_lr': tk_lr, 'l2': l2,
+#                                     'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
+#                 print(f"  avg f1={avg:.4f}")
 
-    best = max(all_results, key=lambda x: x['avg_f1'])
-    print(f"\nBest: sh_lr={best['sh_lr']}, tk_lr={best['tk_lr']}, "
-          f"l2={best['l2']}, f1={best['avg_f1']:.4f}")
-    with open(os.path.join(OUTPUT_DIR, f'{label_type}_tuning.pkl'), 'wb') as f:
-        pickle.dump({'all': all_results, 'best': best}, f)
-    return best['sh_lr'], best['tk_lr'], best['l2']
+#     best = max(all_results, key=lambda x: x['avg_f1'])
+#     print(f"\nBest: sh_lr={best['sh_lr']}, tk_lr={best['tk_lr']}, "
+#           f"l2={best['l2']}, f1={best['avg_f1']:.4f}")
+#     with open(os.path.join(OUTPUT_DIR, f'{label_type}_tuning.pkl'), 'wb') as f:
+#         pickle.dump({'all': all_results, 'best': best}, f)
+#     return best['sh_lr'], best['tk_lr'], best['l2']
 
 
 # =============================
 # MAIN
 # =============================
 if __name__ == '__main__':
-    bsh_ar, btk_ar, bl2_ar = hyperparameter_tuning('ar', [SHARED_LR], [TASK_LR], [L2_TASK])
-    bsh_va, btk_va, bl2_va = hyperparameter_tuning('va', [SHARED_LR], [TASK_LR], [L2_TASK])
+    # bsh_ar, btk_ar, bl2_ar = hyperparameter_tuning('ar', [SHARED_LR], [TASK_LR], [L2_TASK])
+    # bsh_va, btk_va, bl2_va = hyperparameter_tuning('va', [SHARED_LR], [TASK_LR], [L2_TASK])
 
     train_data, test_data = {}, {}
     for task_idx, pid in enumerate(participant_ids):
@@ -295,12 +295,14 @@ if __name__ == '__main__':
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
-    model_ar = _train_pcgrad('ar', bsh_ar, btk_ar, bl2_ar, train_data)
-
+    #model_ar = _train_pcgrad('ar', bsh_ar, btk_ar, bl2_ar, train_data)
+    model_ar = _train_pcgrad('ar', SHARED_LR, TASK_LR, L2_TASK, train_data)
+    
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
-    model_va = _train_pcgrad('va', bsh_va, btk_va, bl2_va, train_data)
-
+    #model_va = _train_pcgrad('va', bsh_va, btk_va, bl2_va, train_data)
+    model_va = _train_pcgrad('va', SHARED_LR, TASK_LR, L2_TASK, train_data)
+    
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = _evaluate_all(model_ar, model_va, test_data)
     agg     = aggregate_results(results)
