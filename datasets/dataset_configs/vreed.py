@@ -12,16 +12,15 @@ import pickle
 import pandas as pd
 from config import HARDCODED_SPLITS
 
-# CSV_PATH = '/content/drive/MyDrive/Phase A/src_new/dataset_configs/VREED_data_v2.csv'
-# PKL_PATH = '/content/drive/MyDrive/Phase A/src_new/dataset_configs/unique_id_trials_VREED_v2.pkl'
+CSV_PATH = '/content/drive/MyDrive/Phase A/src_new/dataset_configs/VREED_data_v2.csv'
+PKL_PATH = '/content/drive/MyDrive/Phase A/src_new/dataset_configs/unique_id_trials_VREED_v2.pkl'
 
-import os
-_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_PATH = os.path.join(_DIR, 'VREED_data_v2.csv')
-PKL_PATH = os.path.join(_DIR, 'unique_id_trials_VREED_v2.pkl')
+# import os
+# _DIR = os.path.dirname(os.path.abspath(__file__))
+# CSV_PATH = os.path.join(_DIR, 'VREED_data_v2.csv')
+# PKL_PATH = os.path.join(_DIR, 'unique_id_trials_VREED_v2.pkl')
 
 participant_ids = sorted(HARDCODED_SPLITS.keys())
-
 
 def load_vreed_df(preserve_trial_order: bool = False) -> pd.DataFrame:
     """

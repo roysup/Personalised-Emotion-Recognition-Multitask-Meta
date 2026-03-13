@@ -24,8 +24,8 @@ from utils import (set_all_seeds, create_kfold_splits, compute_per_participant_s
 from training import evaluate_per_participant, aggregate_results, save_all_results # CHECK
 
 BATCH_SIZE = 32
-#BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
-BASE_OUTPUT_DIR = os.path.join('results', 'VREED')
+BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
+#BASE_OUTPUT_DIR = os.path.join('results', 'VREED')
 
 OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_pstl_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -183,11 +183,11 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
 # =============================
 if __name__ == '__main__':
     best_lr_ar, best_l2_ar = hyperparameter_tuning('ar', [3e-4], [1e-5]) # CHECK
-    torch.cuda.empty_cache()
+    #torch.cuda.empty_cache()
     best_lr_va, best_l2_va = hyperparameter_tuning('va', [3e-4], [1e-5]) # CHECK
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
-    torch.cuda.empty_cache() 
+    #torch.cuda.empty_cache() 
     set_all_seeds(SEED)
     model_ar = _train_single('ar', best_lr_ar, best_l2_ar)
     torch.save(model_ar.state_dict(), os.path.join(OUTPUT_DIR, 'model_ar.pth'))
@@ -195,7 +195,7 @@ if __name__ == '__main__':
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     
     set_all_seeds(SEED)
-    torch.cuda.empty_cache() 
+    #torch.cuda.empty_cache() 
     model_va = _train_single('va', best_lr_va, best_l2_va)
     torch.save(model_va.state_dict(), os.path.join(OUTPUT_DIR, 'model_va.pth'))
 
