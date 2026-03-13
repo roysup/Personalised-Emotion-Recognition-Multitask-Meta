@@ -12,8 +12,11 @@ import pickle
 import pandas as pd
 from config import HARDCODED_SPLITS
 
-CSV_PATH = '/content/drive/MyDrive/Phase A/src_new/dataset_configs/VREED_data_v2.csv'
-PKL_PATH = '/content/drive/MyDrive/Phase A/src_new/dataset_configs/unique_id_trials_VREED_v2.pkl'
+# CSV_PATH = '/content/drive/MyDrive/Phase A/src_new/dataset_configs/VREED_data_v2.csv'
+# PKL_PATH = '/content/drive/MyDrive/Phase A/src_new/dataset_configs/unique_id_trials_VREED_v2.pkl'
+
+CSV_PATH = '/content/drive/MyDrive/Phase A/data/VREED_data_v2.csv'
+PKL_PATH = '/content/drive/MyDrive/Phase A/data/unique_id_trials_VREED_v2.pkl'
 
 # import os
 # _DIR = os.path.dirname(os.path.abspath(__file__))
