@@ -4,7 +4,7 @@ One model trained on all participants pooled together, separately for AR and VA.
 """
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # CHECK
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 os.environ["PYTHONHASHSEED"] = str(42)
 
@@ -17,11 +17,11 @@ from torch.utils.data import TensorDataset, DataLoader
 
 from config import SEED, WINDOW_SIZE, STRIDE, N_FOLDS, MAX_NORM, EPOCHS, HARDCODED_SPLITS
 from data import create_sliding_windows
-from dataset_configs.vreed import load_vreed_df, participant_ids
-from models import SingleTaskModel
+from dataset_configs.vreed import load_vreed_df, participant_ids # CHECK
+from models import SingleTaskModel # CHECK
 from utils import (set_all_seeds, create_kfold_splits, compute_per_participant_stds,
-                   print_determinism_summary)
-from training import evaluate_per_participant, aggregate_results, save_all_results
+                   print_determinism_summary) # CHECK
+from training import evaluate_per_participant, aggregate_results, save_all_results # CHECK
 
 BATCH_SIZE = 32
 #BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
@@ -55,9 +55,9 @@ test_df  = df[df['participant_trial_encoded'].isin(_test_set)].reset_index(drop=
 # train_df['Trial'] = train_df['participant_trial_encoded']
 # test_df['Trial']  = test_df['participant_trial_encoded']
 
-# With this:
 train_df = train_df.drop(columns=['Trial']).rename(columns={'participant_trial_encoded': 'Trial'})
 test_df  = test_df.drop(columns=['Trial']).rename(columns={'participant_trial_encoded': 'Trial'})
+
 
 # =============================
 # HELPERS
@@ -70,7 +70,6 @@ def _make_loader(data_df, label_type, shuffle):
     g  = torch.Generator(); g.manual_seed(SEED)
     return DataLoader(ds, batch_size=BATCH_SIZE, shuffle=shuffle,
                       num_workers=0, generator=g if shuffle else None)
-
 
 def _train_single(label_type, lr, l2_lambda):
     set_all_seeds(SEED)
@@ -183,16 +182,20 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
 # MAIN
 # =============================
 if __name__ == '__main__':
-    best_lr_ar, best_l2_ar = hyperparameter_tuning('ar', [3e-4], [1e-5])
-    best_lr_va, best_l2_va = hyperparameter_tuning('va', [3e-4], [1e-5])
+    best_lr_ar, best_l2_ar = hyperparameter_tuning('ar', [3e-4], [1e-5]) # CHECK
+    torch.cuda.empty_cache()
+    best_lr_va, best_l2_va = hyperparameter_tuning('va', [3e-4], [1e-5]) # CHECK
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
+    torch.cuda.empty_cache() 
     set_all_seeds(SEED)
     model_ar = _train_single('ar', best_lr_ar, best_l2_ar)
     torch.save(model_ar.state_dict(), os.path.join(OUTPUT_DIR, 'model_ar.pth'))
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
+    
     set_all_seeds(SEED)
+    torch.cuda.empty_cache() 
     model_va = _train_single('va', best_lr_va, best_l2_va)
     torch.save(model_va.state_dict(), os.path.join(OUTPUT_DIR, 'model_va.pth'))
 
