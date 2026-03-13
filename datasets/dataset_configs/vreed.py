@@ -13,25 +13,13 @@ import os
 import pickle
 import pandas as pd
 
-# CSV_PATH = '/content/drive/MyDrive/Phase A/src_new/dataset_configs/VREED_data_v2.csv'
-# PKL_PATH = '/content/drive/MyDrive/Phase A/src_new/dataset_configs/unique_id_trials_VREED_v2.pkl'
-
-# CSV_PATH = '/content/drive/MyDrive/Phase A/data/VREED_data_v2.csv'
-# PKL_PATH = '/content/drive/MyDrive/Phase A/data/unique_id_trials_VREED_v2.pkl'
-
-# import os
-# _DIR = os.path.dirname(os.path.abspath(__file__))
-# CSV_PATH = os.path.join(_DIR, 'VREED_data_v2.csv')
-# PKL_PATH = os.path.join(_DIR, 'unique_id_trials_VREED_v2.pkl')
-
-# Fix imports — vreed.py is 2 levels below repo root
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if os.path.join(_REPO_ROOT, 'src') not in sys.path:
     sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 
 from config import HARDCODED_SPLITS
 
-# Use the symlink you created: ln -s "Phase A/data" data
+# Use the symlink created: ln -s "Phase A/data" data
 CSV_PATH = os.path.join(_REPO_ROOT, 'data', 'VREED_data_v2.csv')
 PKL_PATH = os.path.join(_REPO_ROOT, 'data', 'unique_id_trials_VREED_v2.pkl')
 
