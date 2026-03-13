@@ -4,7 +4,12 @@ One model trained on all participants pooled together, separately for AR and VA.
 """
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # CHECK
+#sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # CHECK
+# AFTER
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))       # for config, data, models, utils, training
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))  # for dataset_configs.vreed
+
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 os.environ["PYTHONHASHSEED"] = str(42)
 
@@ -25,6 +30,7 @@ from training import evaluate_per_participant, aggregate_results, save_all_resul
 
 BATCH_SIZE = 32
 BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
+
 #BASE_OUTPUT_DIR = os.path.join('results', 'VREED')
 
 OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_pstl_results')
