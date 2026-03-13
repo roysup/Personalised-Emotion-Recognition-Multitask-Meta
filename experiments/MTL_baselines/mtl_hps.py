@@ -22,8 +22,7 @@ from config import SEED, WINDOW_SIZE, STRIDE, N_FOLDS, MAX_NORM, EPOCHS, HARDCOD
 from data import create_sliding_windows, make_combined_mtl_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import MTLModel
-from utils import (set_all_seeds, compute_metrics_from_cm, create_kfold_splits,
-                   compute_per_participant_stds, print_determinism_summary)
+from utils import (set_all_seeds, compute_metrics_from_cm, create_kfold_splits)
 from training import aggregate_results, save_all_results
 from paths import RESULTS_DIR
 BASE_OUTPUT_DIR = RESULTS_DIR
@@ -47,14 +46,12 @@ print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
 # =============================
 df = load_vreed_df()
 
-
 # =============================
 # HELPERS
 # =============================
 def _l2_task_only(model):
     return L2_TASK * sum(p.norm(2)**2 for p in model.task_specific_parameters()
                          if p.requires_grad)
-
 
 def _train_mtl(label_type, lr_shared, lr_task, l2_fn, train_data_dict):
     loader, _, _ = make_combined_mtl_loader(
@@ -98,7 +95,6 @@ def _train_mtl(label_type, lr_shared, lr_task, l2_fn, train_data_dict):
     model.load_state_dict(torch.load(ckpt_path))
     return model
 
-
 def _evaluate_all(model_ar, model_va, test_data_dict):
     from sklearn.metrics import confusion_matrix
     results = []
@@ -138,7 +134,6 @@ def _evaluate_all(model_ar, model_va, test_data_dict):
             'y_true_va': y_va_i, 'y_pred_va': pred_va, 'y_pred_probs_va': prob_va,
         })
     return results
-
 
 # =============================
 # HYPERPARAMETER TUNING
@@ -223,7 +218,6 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
     with open(os.path.join(OUTPUT_DIR, f'{label_type}_tuning.pkl'), 'wb') as f:
         pickle.dump({'all': all_results, 'best': best}, f)
     return best['sh_lr'], best['tk_lr'], best['l2']
-
 
 # =============================
 # MAIN

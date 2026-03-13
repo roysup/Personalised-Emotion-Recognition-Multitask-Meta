@@ -23,13 +23,11 @@ from config import SEED, WINDOW_SIZE, STRIDE, N_FOLDS, MAX_NORM, EPOCHS, HARDCOD
 from data import create_sliding_windows
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import SingleTaskModel
-from utils import (set_all_seeds, compute_metrics_from_cm, create_kfold_splits,
-                   compute_per_participant_stds, print_determinism_summary)
+from utils import (set_all_seeds, compute_metrics_from_cm, create_kfold_splits)
 from training import aggregate_results, save_all_results
 from paths import RESULTS_DIR
 BASE_OUTPUT_DIR = RESULTS_DIR
 BATCH_SIZE = 8
-#BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
 OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_stl_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -41,7 +39,6 @@ print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
 # =============================
 df = load_vreed_df()
 
-
 # =============================
 # HELPERS
 # =============================
@@ -52,7 +49,6 @@ def _make_loader(X, y, shuffle):
     g   = torch.Generator(); g.manual_seed(SEED)
     return DataLoader(ds, batch_size=BATCH_SIZE, shuffle=shuffle,
                       num_workers=0, generator=g if shuffle else None)
-
 
 def _train_participant(task_idx, label_type, lr, l2_lambda, train_videos, participant_data):
     train_df = participant_data[participant_data['Trial'].isin(train_videos)].reset_index(drop=True)
@@ -87,7 +83,6 @@ def _train_participant(task_idx, label_type, lr, l2_lambda, train_videos, partic
         sched.step(running / len(loader))
 
     return model
-
 
 def _evaluate_participant(model_ar, model_va, task_idx, test_videos, participant_data):
     test_df = participant_data[participant_data['Trial'].isin(test_videos)].reset_index(drop=True)
@@ -126,7 +121,6 @@ def _evaluate_participant(model_ar, model_va, task_idx, test_videos, participant
         'y_true_ar': y_ar.astype(int), 'y_pred_ar': pred_ar, 'y_pred_probs_ar': prob_ar,
         'y_true_va': y_va.astype(int), 'y_pred_va': pred_va, 'y_pred_probs_va': prob_va,
     }
-
 
 # =============================
 # HYPERPARAMETER TUNING
@@ -206,7 +200,6 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
     with open(os.path.join(OUTPUT_DIR, f'{label_type}_tuning.pkl'), 'wb') as f:
         pickle.dump({'all': results, 'best': best}, f)
     return best['lr'], best['l2']
-
 
 # =============================
 # MAIN
