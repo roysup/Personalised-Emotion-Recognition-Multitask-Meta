@@ -26,6 +26,8 @@ from models import MTLModel
 from utils import (set_all_seeds, compute_metrics_from_cm, create_kfold_splits,
                    compute_per_participant_stds, print_determinism_summary)
 from training import aggregate_results, save_all_results
+from paths import RESULTS_DIR
+BASE_OUTPUT_DIR = RESULTS_DIR
 
 BATCH_SIZE = 26
 NUM_TASKS  = 26
@@ -33,7 +35,7 @@ SHARED_LR  = 3e-4
 TASK_LR    = 1e-4
 L2_TASK    = 1e-5
 
-BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
+#BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
 OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_hps_pcgrad_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 

@@ -18,10 +18,11 @@ if os.path.join(_REPO_ROOT, 'src') not in sys.path:
     sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 
 from config import HARDCODED_SPLITS
+from paths import CSV_PATH, PKL_PATH
 
 # Use the symlink created: ln -s "Phase A/data" data
-CSV_PATH = os.path.join(_REPO_ROOT, 'data', 'VREED_data_v2.csv')
-PKL_PATH = os.path.join(_REPO_ROOT, 'data', 'unique_id_trials_VREED_v2.pkl')
+# CSV_PATH = os.path.join(_REPO_ROOT, 'data', 'VREED_data_v2.csv')
+# PKL_PATH = os.path.join(_REPO_ROOT, 'data', 'unique_id_trials_VREED_v2.pkl')
 
 participant_ids = sorted(HARDCODED_SPLITS.keys())
 

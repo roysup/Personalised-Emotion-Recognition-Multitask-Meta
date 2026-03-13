@@ -26,9 +26,11 @@ from models import SingleTaskModel # CHECK
 from utils import (set_all_seeds, create_kfold_splits, compute_per_participant_stds,
                    print_determinism_summary) # CHECK
 from training import evaluate_per_participant, aggregate_results, save_all_results # CHECK
+from paths import RESULTS_DIR
+BASE_OUTPUT_DIR = RESULTS_DIR
 
 BATCH_SIZE = 32
-BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
+#BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
 OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_pstl_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
