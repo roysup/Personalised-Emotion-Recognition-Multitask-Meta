@@ -181,6 +181,51 @@ class BalancedSampler(Sampler):
         return self.num_batches * self.num_tasks
 
 
+class BalancedSamplerMTML(Sampler):
+    """
+    BalancedSampler variant for MTML scripts where the set of active task IDs
+    is variable (fold-based tuning, mixed train/test sets, skipped participants).
+
+    Unlike BalancedSampler, this takes an explicit list of present task IDs
+    rather than a contiguous range(num_tasks), so gaps are handled safely.
+
+    Parameters
+    ----------
+    task_ids         : int64 numpy array — task ID per sample in the dataset
+    present_task_ids : list of int — which task IDs are actually present
+    samples_per_task : dict {task_id: count}
+    seed             : int or None
+    """
+
+    def __init__(self, task_ids, present_task_ids, samples_per_task, seed=None):
+        self.present_tasks = sorted(set(present_task_ids))
+        self.num_tasks     = len(self.present_tasks)
+        self.num_batches   = max(samples_per_task[t] for t in self.present_tasks)
+        self.rng           = np.random.default_rng(seed)
+        self.task_indices  = {t: np.where(task_ids == t)[0] for t in self.present_tasks}
+
+    def __iter__(self):
+        indices = []
+        for t in self.present_tasks:
+            idx = self.task_indices[t]
+            if len(idx) < self.num_batches:
+                sampled = self.rng.choice(idx, size=self.num_batches, replace=True)
+            else:
+                sampled = self.rng.permutation(idx)[:self.num_batches]
+            indices.append(sampled)
+
+        indices     = np.array(indices).T.flatten()
+        batch_order = self.rng.permutation(self.num_batches)
+
+        shuffled = []
+        for b in batch_order:
+            shuffled.extend(indices[b * self.num_tasks: (b + 1) * self.num_tasks])
+        return iter(shuffled)
+
+    def __len__(self):
+        return self.num_batches * self.num_tasks
+
+
 # =============================
 # LOADER BUILDERS
 # =============================

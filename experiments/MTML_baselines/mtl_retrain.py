@@ -23,7 +23,7 @@ from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, roc_auc_
 
 from config import HARDCODED_SPLITS, SEED, MAX_NORM
 from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
-from data import create_sliding_windows, BalancedSampler
+from data import create_sliding_windows, BalancedSamplerMTML
 from dataset_configs.vreed import load_vreed_df_mtml
 from models import BaseFeatureExtractor
 from paths import RESULTS_DIR
@@ -77,7 +77,7 @@ def make_combined_loader(tasks_dict, user_list, label_type, split='train'):
     tids = np.concatenate(all_tids); vids = np.concatenate(all_vids)
     X_t = torch.tensor(X); y_t = torch.tensor(y).unsqueeze(1)  # (N, window, channels) — model permutes internally
     dataset = TensorDataset(X_t, y_t, torch.tensor(tids), torch.tensor(vids))
-    sampler = BalancedSampler(tids, list(local_map.keys()), spt, seed=SEED)
+    sampler = BalancedSamplerMTML(tids, list(local_map.keys()), spt, seed=SEED)
     loader = DataLoader(dataset, batch_size=len(local_map), sampler=sampler, num_workers=0)
     print(f"[{split}/{label_type}] users={len(local_map)} samples={len(dataset)}")
     return loader, len(dataset), local_map

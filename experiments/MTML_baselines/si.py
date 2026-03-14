@@ -11,11 +11,9 @@ os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 os.environ["PYTHONHASHSEED"] = str(42)
 
 import numpy as np
-import pickle
+import pickle  # still needed for saving results
 import torch
-import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import confusion_matrix, roc_auc_score
 import matplotlib.pyplot as plt
@@ -23,8 +21,10 @@ import seaborn as sns
 import pandas as pd
 
 from config import HARDCODED_SPLITS, SEED, WINDOW_SIZE, STRIDE, MAX_NORM, EPOCHS
-from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, F1Score, create_kfold_splits
-from paths import CSV_PATH, PKL_PATH, RESULTS_DIR
+from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, F1Score, create_kfold_splits, make_kfolds
+from models import SingleTaskModel
+from dataset_configs.vreed import load_vreed_df
+from paths import RESULTS_DIR
 
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
@@ -43,17 +43,7 @@ print(f"Device: {device}\nOutput: {output_dir}")
 # =============================
 # DATA
 # =============================
-df = pd.read_csv(CSV_PATH)
-df = df.drop(columns=['ECG', 'GSR', 'Unnamed: 0.1', 'Unnamed: 0', 'Trial'], errors='ignore')
-df = df.rename(columns={'ECG_scaled': 'ECG', 'GSR_scaled': 'GSR', 'Num_Code': 'video'})
-
-with open(PKL_PATH, 'rb') as f:
-    unique_id_trials = sorted(pickle.load(f))
-
-shuffled_df = pd.DataFrame()
-for id_trial in unique_id_trials:
-    shuffled_df = pd.concat([shuffled_df, df[df['ID_video'] == id_trial]])
-df = shuffled_df.reset_index(drop=True)
+df = load_vreed_df(preserve_trial_order=True)
 df['participant_trial_encoded'] = df['ID_video'].astype(str)
 
 existing_ids = set(df['ID'].unique())
@@ -101,35 +91,6 @@ def get_frames(XY, window_size, stride, label_type='AR'):
     return np.array(frames), np.array(labels), pte_list
 
 
-class SIModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv1d(2, 128, kernel_size=2, padding=0)
-        self.bn1   = nn.BatchNorm1d(128)
-        self.pool1 = nn.MaxPool1d(2, stride=2, padding=1)
-        self.conv2 = nn.Conv1d(128, 64, kernel_size=1, padding=0)
-        self.bn2   = nn.BatchNorm1d(64)
-        self.pool2 = nn.MaxPool1d(2, stride=2)
-        self.lstm  = nn.LSTM(64, 64, batch_first=True)
-        self.fc1   = nn.Linear(64, 128)
-        self.fc2   = nn.Linear(128, 64)
-        self.out   = nn.Linear(64, 1)
-        for m in self.modules():
-            if isinstance(m, (nn.Linear, nn.Conv1d)):
-                nn.init.xavier_uniform_(m.weight, gain=nn.init.calculate_gain('relu'))
-                if m.bias is not None: nn.init.zeros_(m.bias)
-
-    def forward(self, x):
-        x = x.permute(0, 2, 1)
-        x = F.relu(self.bn1(self.conv1(x))); x = self.pool1(x)
-        x = F.relu(self.bn2(self.conv2(x))); x = self.pool2(x)
-        x = x.permute(0, 2, 1)
-        x, _ = self.lstm(x)
-        x = torch.mean(x, dim=1)
-        x = F.relu(self.fc1(x)); x = F.relu(self.fc2(x))
-        return self.out(x)
-
-
 def make_loader(X, y, shuffle):
     X_t = torch.tensor(X.astype('float32'))
     y_t = torch.tensor(y.astype('float32')).reshape(-1, 1)
@@ -141,7 +102,7 @@ def make_loader(X, y, shuffle):
 
 def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
     set_all_seeds(SEED)
-    model = SIModel().to(device)
+    model = SingleTaskModel().to(device)
     opt = optim.Adam(model.parameters(), lr=lr)
     sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss(reduction='none')

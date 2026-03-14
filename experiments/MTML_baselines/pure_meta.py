@@ -105,21 +105,14 @@ def adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2_lambda):
 
 def make_sup_q_loader(df_user, splits, uid, ar_or_va, seed=SEED):
     """Build support/query loaders from user's train/test trials."""
-    sup_df = df_user[df_user['Trial'].isin(sorted(splits[uid]['train']))]
-    q_df   = df_user[df_user['Trial'].isin(sorted(splits[uid]['test']))]
-    from mtml_shared import create_sliding_windows
-    Xs, yas, yvs, _, _ = create_sliding_windows(sup_df, WINDOW_SIZE, STRIDE)
-    Xq, yar, yvr, _, _ = create_sliding_windows(q_df,   WINDOW_SIZE, STRIDE) if len(q_df) else \
-                          (np.empty((0,WINDOW_SIZE,2)), np.empty(0), np.empty(0), None, None)
-    X_sup = torch.tensor(Xs).float().permute(0,2,1)
-    y_sup = torch.tensor(yas if ar_or_va=='ar' else yvs).float().unsqueeze(1)
-    X_q   = torch.tensor(Xq).float().permute(0,2,1)
-    y_q   = torch.tensor(yar if ar_or_va=='ar' else yvr).float().unsqueeze(1)
-    g = torch.Generator(); g.manual_seed(seed)
-    sup_loader = DataLoader(TensorDataset(X_sup, y_sup), batch_size=8,
-                            shuffle=True, generator=g, num_workers=0)
-    q_loader   = DataLoader(TensorDataset(X_q, y_q), batch_size=32, shuffle=False, num_workers=0)
-    return sup_loader, q_loader
+    return build_support_query(
+        df_user,
+        splits[uid]['train'],
+        splits[uid]['test'],
+        ar_or_va,
+        seed=seed,
+        window_size=WINDOW_SIZE,
+        stride=STRIDE)
 
 
 # =============================

@@ -25,7 +25,7 @@ import seaborn as sns
 
 from config import HARDCODED_SPLITS, SEED, MAX_NORM
 from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
-from data import create_sliding_windows, BalancedSampler
+from data import create_sliding_windows, BalancedSamplerMTML
 from dataset_configs.vreed import load_vreed_df_mtml
 from models import BaseFeatureExtractor, TaskHead
 from training import adapt_inner_loop, compute_l2_split
@@ -84,7 +84,7 @@ def make_combined_loader(tasks_dict, user_list, label_type, split='train'):
     X_t = torch.tensor(X, dtype=torch.float32)  # (N, window, channels) — model permutes internally
     y_t = torch.tensor(y, dtype=torch.float32).unsqueeze(1)
     dataset = TensorDataset(X_t, y_t, torch.tensor(tids), torch.tensor(vids))
-    sampler = BalancedSampler(tids, list(local_map.keys()), spt, SEED)
+    sampler = BalancedSamplerMTML(tids, list(local_map.keys()), spt, SEED)
     loader = DataLoader(dataset, batch_size=len(local_map), sampler=sampler, num_workers=0)
     print(f"[{split}/{label_type}] users={len(local_map)} samples={len(dataset)}")
     return loader, len(dataset), local_map
