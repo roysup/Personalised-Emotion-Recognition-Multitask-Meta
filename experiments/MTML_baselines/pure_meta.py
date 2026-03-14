@@ -1,0 +1,270 @@
+"""
+Pure Meta-Learning — Reptile with single-task episodes, single shared model (no task heads).
+"""
+import os
+import sys
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+os.environ["PYTHONHASHSEED"] = str(42)
+
+import gc, copy
+import numpy as np
+import pickle
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.data import TensorDataset, DataLoader
+from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
+
+from config import HARDCODED_SPLITS, SEED, MAX_NORM
+from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc
+from paths import CSV_PATH, RESULTS_DIR
+from mtml_shared import build_support_query, make_kfolds
+
+hardcoded_splits = HARDCODED_SPLITS
+BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
+output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_PureMeta')
+os.makedirs(output_dir, exist_ok=True)
+
+WINDOW_SIZE = 2560; STRIDE = 1280
+N_FOLDS = 5; L2_LAMBDA = 1e-5
+meta_steps_grid  = [50]
+meta_lr_grid     = [0.01]
+inner_steps_grid = [10]
+inner_lr_grid    = [1e-3]
+
+set_all_seeds(SEED)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Device: {device}\nOutput: {output_dir}")
+
+# =============================
+# DATA
+# =============================
+df = pd.read_csv(CSV_PATH)
+df = df.drop(columns=['ECG', 'GSR', 'Unnamed: 0.1', 'Unnamed: 0', 'Trial'], errors='ignore')
+df = df.rename(columns={'ECG_scaled': 'ECG', 'GSR_scaled': 'GSR', 'Num_Code': 'video'})
+df['Trial'] = df['video']
+df = df.sort_values(['ID', 'Trial']).reset_index(drop=True)
+
+participant_ids   = sorted([p for p in df['ID'].unique() if p in hardcoded_splits])
+test_participants  = [105, 109, 112, 125, 131, 132]
+train_participants = sorted([p for p in participant_ids if p not in test_participants])
+print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
+
+
+# =============================
+# MODEL — single task (no heads)
+# =============================
+class MetaLearner(nn.Module):
+    def __init__(self, hidden=64):
+        super().__init__()
+        self.conv1 = nn.Conv1d(2, 128, 2); self.bn1 = nn.BatchNorm1d(128)
+        self.pool1 = nn.MaxPool1d(2, 2, 1)
+        self.conv2 = nn.Conv1d(128, 64, 1); self.bn2 = nn.BatchNorm1d(64)
+        self.pool2 = nn.MaxPool1d(2, 2)
+        self.lstm  = nn.LSTM(64, hidden, batch_first=True)
+        self.fc1   = nn.Linear(hidden, 128); self.fc2 = nn.Linear(128, 64); self.out = nn.Linear(64, 1)
+        for m in self.modules():
+            if isinstance(m, (nn.Conv1d, nn.Linear)):
+                nn.init.xavier_uniform_(m.weight, gain=nn.init.calculate_gain('relu'))
+                if m.bias is not None: nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = torch.relu(self.bn1(self.conv1(x))); x = self.pool1(x)
+        x = torch.relu(self.bn2(self.conv2(x))); x = self.pool2(x)
+        x = x.permute(0,2,1); out, _ = self.lstm(x)
+        x = torch.mean(out, dim=1)
+        x = torch.relu(self.fc1(x)); x = torch.relu(self.fc2(x)); return self.out(x)
+
+
+# =============================
+# INNER LOOP (model only, no separate head)
+# =============================
+def adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2_lambda):
+    adapted = copy.deepcopy(model).to(device); adapted.train()
+    opt = optim.Adam(adapted.parameters(), lr=inner_lr)
+    sched = ReduceLROnPlateau(opt, 'min', 0.1, 3)
+    loss_fn = nn.BCEWithLogitsLoss()
+    for step in range(inner_steps):
+        ep_loss = 0.0; nb = 0
+        for Xb, yb in sup_loader:
+            Xb, yb = Xb.to(device), yb.to(device)
+            opt.zero_grad()
+            loss = loss_fn(adapted(Xb), yb)
+            l2 = l2_lambda * sum(p.norm(2)**2 for p in adapted.parameters() if p.requires_grad)
+            loss = loss + l2
+            if not torch.isnan(loss):
+                loss.backward(); torch.nn.utils.clip_grad_norm_(adapted.parameters(), MAX_NORM); opt.step()
+            ep_loss += loss.item(); nb += 1
+        if nb > 0: sched.step(ep_loss / nb)
+    return adapted
+
+
+def make_sup_q_loader(df_user, splits, uid, ar_or_va, seed=SEED):
+    """Build support/query loaders from user's train/test trials."""
+    sup_df = df_user[df_user['Trial'].isin(sorted(splits[uid]['train']))]
+    q_df   = df_user[df_user['Trial'].isin(sorted(splits[uid]['test']))]
+    from mtml_shared import create_sliding_windows
+    Xs, yas, yvs, _, _ = create_sliding_windows(sup_df, WINDOW_SIZE, STRIDE)
+    Xq, yar, yvr, _, _ = create_sliding_windows(q_df,   WINDOW_SIZE, STRIDE) if len(q_df) else \
+                          (np.empty((0,WINDOW_SIZE,2)), np.empty(0), np.empty(0), None, None)
+    X_sup = torch.tensor(Xs).float().permute(0,2,1)
+    y_sup = torch.tensor(yas if ar_or_va=='ar' else yvs).float().unsqueeze(1)
+    X_q   = torch.tensor(Xq).float().permute(0,2,1)
+    y_q   = torch.tensor(yar if ar_or_va=='ar' else yvr).float().unsqueeze(1)
+    g = torch.Generator(); g.manual_seed(seed)
+    sup_loader = DataLoader(TensorDataset(X_sup, y_sup), batch_size=8,
+                            shuffle=True, generator=g, num_workers=0)
+    q_loader   = DataLoader(TensorDataset(X_q, y_q), batch_size=32, shuffle=False, num_workers=0)
+    return sup_loader, q_loader
+
+
+# =============================
+# META TRAINING
+# =============================
+def reptile_train(model, train_users, meta_steps, meta_lr, inner_steps, inner_lr, l2, ar_or_va, seed):
+    rng = np.random.default_rng(seed); uids = sorted(train_users.keys())
+    model.to(device)
+    for step in range(meta_steps):
+        uid = int(rng.choice(uids))
+        sup_loader, _ = make_sup_q_loader(train_users[uid], hardcoded_splits, uid, ar_or_va, seed)
+        adapted = adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2)
+        with torch.no_grad():
+            for p, pa in zip(model.parameters(), adapted.parameters()):
+                p.data.add_(meta_lr * (pa.data - p.data))
+    return model
+
+
+# =============================
+# HYPERPARAMETER TUNING
+# =============================
+def hyperparameter_tuning(label_type='ar'):
+    print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type.upper()}] PureMeta\n{'='*60}")
+    results = []; train_folds = make_kfolds(train_participants)
+    for ms in meta_steps_grid:
+        for mlr in meta_lr_grid:
+            for isp in inner_steps_grid:
+                for ilr in inner_lr_grid:
+                    fold_f1s = []
+                    for fold_i in range(N_FOLDS):
+                        val_ps = train_folds[fold_i]
+                        tr_ps  = [p for j,f in enumerate(train_folds) if j != fold_i for p in f]
+                        tr_users = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in tr_ps}
+                        val_users = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in val_ps}
+                        try:
+                            model = MetaLearner().to(device)
+                            model = reptile_train(model, tr_users, ms, mlr, isp, ilr, L2_LAMBDA, label_type, SEED)
+                        except: continue
+                        val_f1s = []
+                        for uid in val_ps:
+                            sup_loader, q_loader = make_sup_q_loader(val_users[uid], hardcoded_splits, uid, label_type)
+                            if len(q_loader.dataset) == 0: continue
+                            adapted = adapt(model, sup_loader, label_type, isp, ilr, L2_LAMBDA)
+                            adapted.eval(); probs, labels = [], []
+                            with torch.no_grad():
+                                for Xb, yb in q_loader:
+                                    probs.extend(torch.sigmoid(adapted(Xb.to(device))).cpu().numpy().flatten())
+                                    labels.extend(yb.numpy().flatten())
+                            if labels:
+                                val_f1s.append(f1_score(np.array(labels).astype(int),
+                                                        (np.array(probs)>0.5).astype(int),
+                                                        average='macro', zero_division=0))
+                        if val_f1s:
+                            fold_f1s.append(np.mean(val_f1s))
+                            print(f"  fold {fold_i+1}: f1={fold_f1s[-1]:.4f}")
+                        del model; torch.cuda.empty_cache(); gc.collect()
+                    if not fold_f1s: continue
+                    avg = np.mean(fold_f1s)
+                    results.append({'ms': ms, 'mlr': mlr, 'isp': isp, 'ilr': ilr,
+                                     'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
+                    print(f"  avg f1={avg:.4f}")
+    if not results: return 50, 0.01, 10, 1e-3
+    best = max(results, key=lambda x: x['avg_f1'])
+    with open(os.path.join(output_dir, f'{label_type}_tuning.pkl'), 'wb') as f:
+        pickle.dump({'all': results, 'best': best}, f)
+    return best['ms'], best['mlr'], best['isp'], best['ilr']
+
+
+# =============================
+# MAIN
+# =============================
+if __name__ == '__main__':
+    bms_ar, bmlr_ar, bisp_ar, bilr_ar = hyperparameter_tuning('ar')
+    bms_va, bmlr_va, bisp_va, bilr_va = hyperparameter_tuning('va')
+
+    train_users_ar = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in train_participants}
+    test_users     = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in test_participants}
+
+    print('\n' + '='*60 + '\nTRAINING FINAL AR\n' + '='*60)
+    set_all_seeds(SEED)
+    model_ar = MetaLearner().to(device)
+    model_ar = reptile_train(model_ar, train_users_ar, bms_ar, bmlr_ar, bisp_ar, bilr_ar, L2_LAMBDA, 'ar', SEED)
+    torch.save(model_ar.state_dict(), os.path.join(output_dir, 'meta_model_ar_final.pth'))
+
+    print('\n' + '='*60 + '\nTRAINING FINAL VA\n' + '='*60)
+    set_all_seeds(SEED)
+    train_users_va = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in train_participants}
+    model_va = MetaLearner().to(device)
+    model_va = reptile_train(model_va, train_users_va, bms_va, bmlr_va, bisp_va, bilr_va, L2_LAMBDA, 'va', SEED)
+    torch.save(model_va.state_dict(), os.path.join(output_dir, 'meta_model_va_final.pth'))
+
+    results_ar, results_va = [], []
+    for model, results, label, bms, bisp, bilr in [
+        (model_ar, results_ar, 'ar', bms_ar, bisp_ar, bilr_ar),
+        (model_va, results_va, 'va', bms_va, bisp_va, bilr_va)]:
+        print(f'\n' + '='*60 + f'\nEVALUATION {label.upper()}\n' + '='*60)
+        for uid in sorted(test_participants):
+            sup_loader, q_loader = make_sup_q_loader(test_users[uid], hardcoded_splits, uid, label)
+            if len(q_loader.dataset) == 0: continue
+            print(f"  Participant {uid}: adapting")
+            adapted = adapt(model, sup_loader, label, bisp, bilr, L2_LAMBDA)
+            adapted.eval(); probs, labels_list = [], []
+            with torch.no_grad():
+                for Xb, yb in q_loader:
+                    probs.extend(torch.sigmoid(adapted(Xb.to(device))).cpu().numpy().flatten())
+                    labels_list.extend(yb.numpy().flatten())
+            y_true = np.array(labels_list).astype(int); y_prob = np.array(probs)
+            y_pred = (y_prob > 0.5).astype(int)
+            cm = confusion_matrix(y_true, y_pred, labels=[0,1])
+            acc, prec, rec, f1 = compute_metrics_from_cm(cm)
+            results.append({'participant_id': uid, 'y_true': y_true, 'y_pred': y_pred,
+                             'y_pred_probs': y_prob, 'cm': cm,
+                             'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1})
+            print(f"  Participant {uid}: Acc={acc:.4f} F1={f1:.4f}")
+
+    def aggregate(results, label):
+        all_true  = np.concatenate([r['y_true'] for r in results])
+        all_pred  = np.concatenate([r['y_pred'] for r in results])
+        all_probs = np.concatenate([r['y_pred_probs'] for r in results])
+        cm = confusion_matrix(all_true, all_pred, labels=[0,1])
+        acc, prec, rec, f1 = compute_metrics_from_cm(cm)
+        auc_val, fpr, tpr = safe_roc_auc(all_true, all_probs)
+        print(f"\n{label}: Acc={acc:.4f} F1={f1:.4f} AUC={auc_val:.4f}")
+        return all_true, all_probs, cm, acc, prec, rec, f1, auc_val, fpr, tpr
+
+    all_true_ar, all_probs_ar, cm_AR, ar_acc, ar_prec, ar_rec, ar_f1, ar_auc, ar_fpr, ar_tpr = aggregate(results_ar, 'AR')
+    all_true_va, all_probs_va, cm_VA, va_acc, va_prec, va_rec, va_f1, va_auc, va_fpr, va_tpr = aggregate(results_va, 'VA')
+
+    global_roc = {'AR': {'fpr': ar_fpr, 'tpr': ar_tpr, 'auc': ar_auc, 'y_true': all_true_ar, 'y_pred_probs': all_probs_ar},
+                  'VA': {'fpr': va_fpr, 'tpr': va_tpr, 'auc': va_auc, 'y_true': all_true_va, 'y_pred_probs': all_probs_va}}
+    with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
+        pickle.dump(global_roc, f)
+
+    final_results = {
+        'train_participants': train_participants, 'test_participants': test_participants,
+        'best_hyperparameters': {'AR': {'meta_steps': bms_ar, 'meta_lr': bmlr_ar, 'inner_steps': bisp_ar, 'inner_lr': bilr_ar, 'l2_lambda': L2_LAMBDA},
+                                  'VA': {'meta_steps': bms_va, 'meta_lr': bmlr_va, 'inner_steps': bisp_va, 'inner_lr': bilr_va, 'l2_lambda': L2_LAMBDA}},
+        'ar_acc': ar_acc, 'ar_precision': ar_prec, 'ar_recall': ar_rec, 'ar_f1': ar_f1, 'ar_auc': ar_auc,
+        'va_acc': va_acc, 'va_precision': va_prec, 'va_recall': va_rec, 'va_f1': va_f1, 'va_auc': va_auc,
+        'test_results_per_participant_ar': results_ar,
+        'test_results_per_participant_va': results_va,
+        'cm_ar': cm_AR, 'cm_va': cm_VA,
+    }
+    with open(os.path.join(output_dir, 'puremeta_results.pkl'), 'wb') as f:
+        pickle.dump(final_results, f)
+    print(f"\n✓ All results saved to: {output_dir}")
