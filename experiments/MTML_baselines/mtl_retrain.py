@@ -23,8 +23,10 @@ from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, roc_auc_
 
 from config import HARDCODED_SPLITS, SEED, MAX_NORM
 from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
-from data import create_sliding_windows
-from paths import CSV_PATH, RESULTS_DIR
+from data import create_sliding_windows, BalancedSampler
+from dataset_configs.vreed import load_vreed_df_mtml
+from models import BaseFeatureExtractor
+from paths import RESULTS_DIR
 
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
@@ -49,46 +51,12 @@ print(f"Device: {device}\nOutput: {output_dir}")
 # =============================
 # DATA
 # =============================
-df = pd.read_csv(CSV_PATH)
-df = df.drop(columns=['ECG', 'GSR', 'Unnamed: 0.1', 'Unnamed: 0', 'Trial'], errors='ignore')
-df = df.rename(columns={'ECG_scaled': 'ECG', 'GSR_scaled': 'GSR', 'Num_Code': 'video'})
-df['Trial'] = df['video']
+df = load_vreed_df_mtml()
 
 participant_ids = sorted([p for p in df['ID'].unique() if p in hardcoded_splits])
 test_participants  = [105, 109, 112, 125, 131, 132]
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
-
-
-# =============================
-# BALANCED SAMPLER
-# =============================
-class BalancedSampler(Sampler):
-    def __init__(self, task_ids, present_task_ids, samples_per_task, seed=None):
-        self.present_tasks = sorted(set(present_task_ids))
-        self.num_tasks = len(self.present_tasks)
-        self.num_batches = max(samples_per_task[t] for t in self.present_tasks)
-        self.rng = np.random.default_rng(seed)
-        self.task_indices = {t: np.where(task_ids == t)[0] for t in self.present_tasks}
-
-    def __iter__(self):
-        indices = []
-        for t in self.present_tasks:
-            idx = self.task_indices[t]
-            if len(idx) < self.num_batches:
-                sampled = self.rng.choice(idx, self.num_batches, replace=True)
-            else:
-                sampled = self.rng.permutation(idx)[:self.num_batches]
-            indices.append(sampled)
-        indices = np.array(indices).T.flatten()
-        order = self.rng.permutation(self.num_batches)
-        out = []
-        for b in order:
-            out.extend(indices[b*self.num_tasks:(b+1)*self.num_tasks])
-        return iter(out)
-
-    def __len__(self):
-        return self.num_batches * self.num_tasks
 
 
 def make_combined_loader(tasks_dict, user_list, label_type, split='train'):

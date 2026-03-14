@@ -23,7 +23,8 @@ from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfo
 from models import BaseFeatureExtractor, TaskHead
 from training import adapt_inner_loop, evaluate_test_user
 from data import build_support_query
-from paths import CSV_PATH, RESULTS_DIR
+from dataset_configs.vreed import load_vreed_df_mtml
+from paths import RESULTS_DIR
 
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
@@ -42,11 +43,7 @@ print(f"Device: {device}\nOutput: {output_dir}")
 # =============================
 # DATA
 # =============================
-df = pd.read_csv(CSV_PATH)
-df = df.drop(columns=['ECG','GSR','Unnamed: 0.1','Unnamed: 0','Trial'], errors='ignore')
-df = df.rename(columns={'ECG_scaled':'ECG','GSR_scaled':'GSR','Num_Code':'video'})
-df['Trial'] = df['video']
-df = df.sort_values(['ID','Trial']).reset_index(drop=True)
+df = load_vreed_df_mtml()
 
 participant_ids   = sorted([p for p in df['ID'].unique() if p in hardcoded_splits])
 test_participants  = [105,109,112,125,131,132]
