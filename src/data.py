@@ -81,6 +81,53 @@ def create_sliding_windows(data, window_size, stride, task_id=None):
     )
 
 
+def build_support_query(task_df, support_trials, query_trials, ar_or_va='ar',
+                        seed=42, window_size=2560, stride=1280):
+    """
+    Build support and query DataLoaders for meta-learning inner-loop adaptation.
+
+    Parameters
+    ----------
+    task_df         : DataFrame for one participant (must have Trial, ECG, GSR, AR_Rating, VA_Rating)
+    support_trials  : list of trial IDs to use as support set
+    query_trials    : list of trial IDs to use as query set (may be empty)
+    ar_or_va        : 'ar' or 'va'
+    seed            : int — generator seed for support loader shuffle
+    window_size     : int
+    stride          : int
+
+    Returns
+    -------
+    sup_loader : DataLoader yielding (X, y) batches from support trials
+    q_loader   : DataLoader yielding (X, y) batches from query trials
+    """
+    sup_df = task_df[task_df['Trial'].isin(sorted(support_trials))]
+    Xs, yas, yvs, _, _ = create_sliding_windows(sup_df, window_size, stride)
+    y_sup = yas if ar_or_va == 'ar' else yvs
+
+    if query_trials:
+        qry_df = task_df[task_df['Trial'].isin(sorted(query_trials))]
+        Xq, yar, yvr, _, _ = create_sliding_windows(qry_df, window_size, stride)
+        y_q = yar if ar_or_va == 'ar' else yvr
+    else:
+        Xq   = np.empty((0, window_size, 2), dtype=np.float32)
+        y_q  = np.empty((0,), dtype=np.float32)
+
+    X_sup_t = torch.tensor(Xs).float().permute(0, 2, 1)
+    y_sup_t = torch.tensor(y_sup).float().unsqueeze(1)
+    X_q_t   = torch.tensor(Xq).float().permute(0, 2, 1)
+    y_q_t   = torch.tensor(y_q).float().unsqueeze(1)
+
+    g = torch.Generator()
+    g.manual_seed(seed)
+    sup_loader = DataLoader(TensorDataset(X_sup_t, y_sup_t),
+                            batch_size=8, shuffle=True,
+                            generator=g, num_workers=0)
+    q_loader   = DataLoader(TensorDataset(X_q_t, y_q_t),
+                            batch_size=32, shuffle=False, num_workers=0)
+    return sup_loader, q_loader
+
+
 # =============================
 # BALANCED SAMPLER (MTL)
 # =============================

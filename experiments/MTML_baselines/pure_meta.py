@@ -22,9 +22,9 @@ from torch.utils.data import TensorDataset, DataLoader
 from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
 
 from config import HARDCODED_SPLITS, SEED, MAX_NORM
-from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc
+from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
+from data import build_support_query
 from paths import CSV_PATH, RESULTS_DIR
-from mtml_shared import build_support_query, make_kfolds
 
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')

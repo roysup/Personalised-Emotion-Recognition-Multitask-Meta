@@ -395,6 +395,151 @@ def aggregate_results(results):
 # SAVE ALL RESULTS
 # =============================
 
+# =============================
+# META-LEARNING UTILITIES
+# =============================
+
+def compute_l2_split(shared_params, task_params, l2_shared=0.0, l2_task=1e-5):
+    """
+    Split L2 regularisation: separate lambda for shared backbone vs task head.
+
+    Parameters
+    ----------
+    shared_params : iterable of parameters from the shared backbone
+    task_params   : iterable of parameters from the task-specific head
+    l2_shared     : float — lambda for shared params (typically 0.0)
+    l2_task       : float — lambda for task head params (typically 1e-5)
+
+    Returns
+    -------
+    Scalar tensor on CPU.
+    """
+    reg = torch.tensor(0.0)
+    if l2_shared > 0:
+        for p in shared_params:
+            reg = reg + l2_shared * torch.sum(p ** 2)
+    if l2_task > 0:
+        for p in task_params:
+            reg = reg + l2_task * torch.sum(p ** 2)
+    return reg
+
+
+def adapt_inner_loop(base_model, head, sup_loader, ar_or_va,
+                     inner_steps, inner_lr, device,
+                     l2_shared=0.0, l2_task=1e-5):
+    """
+    Reptile / MAML-style inner-loop adaptation for one participant.
+    Deep-copies both backbone and head, adapts them on the support set,
+    and returns the adapted copies (originals are unchanged).
+
+    Parameters
+    ----------
+    base_model  : BaseFeatureExtractor — shared backbone
+    head        : TaskHead — participant-specific head
+    sup_loader  : DataLoader yielding (X, y) support batches
+    ar_or_va    : 'ar' or 'va' — selects which label was loaded
+    inner_steps : int — number of gradient steps
+    inner_lr    : float — inner-loop learning rate
+    device      : torch.device
+    l2_shared   : float — L2 lambda for backbone params
+    l2_task     : float — L2 lambda for head params
+
+    Returns
+    -------
+    adapted_base : deep copy of backbone after adaptation
+    adapted_head : deep copy of head after adaptation
+    """
+    import copy
+    from torch.optim.lr_scheduler import ReduceLROnPlateau
+
+    adapted_base = copy.deepcopy(base_model).to(device)
+    adapted_head = copy.deepcopy(head).to(device)
+    adapted_base.train(); adapted_head.train()
+
+    sp = list(adapted_base.parameters())
+    tp = list(adapted_head.parameters())
+    opt = torch.optim.Adam(sp + tp, lr=inner_lr)
+    sched = ReduceLROnPlateau(opt, mode='min', factor=0.1, patience=3)
+    loss_fn = nn.BCEWithLogitsLoss()
+
+    for step in range(inner_steps):
+        ep_loss = 0.0; nb = 0
+        for Xb, yb in sup_loader:
+            Xb, yb = Xb.to(device), yb.to(device)
+            opt.zero_grad()
+            loss = loss_fn(adapted_head(adapted_base(Xb)), yb)
+            loss = loss + compute_l2_split(sp, tp, l2_shared, l2_task).to(device)
+            if not torch.isnan(loss):
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(sp + tp, max_norm=1.0)
+                opt.step()
+            ep_loss += loss.item(); nb += 1
+        if nb > 0:
+            sched.step(ep_loss / nb)
+
+    return adapted_base, adapted_head
+
+
+def evaluate_test_user(base_model, head, test_df, splits, uid, ar_or_va,
+                       device, inner_steps, inner_lr,
+                       l2_shared=0.0, l2_task=1e-5):
+    """
+    Adapt the meta-learned backbone to one test participant and evaluate.
+    Imports build_support_query from data at call time to avoid circular imports.
+
+    Parameters
+    ----------
+    base_model  : BaseFeatureExtractor
+    head        : TaskHead (freshly initialised)
+    test_df     : DataFrame for this participant
+    splits      : dict — hardcoded_splits with 'train'/'test' trial lists
+    uid         : int — participant ID
+    ar_or_va    : 'ar' or 'va'
+    device      : torch.device
+    inner_steps : int
+    inner_lr    : float
+    l2_shared   : float
+    l2_task     : float
+
+    Returns
+    -------
+    dict with participant_id, y_true, y_pred, y_pred_probs, cm,
+    accuracy, precision, recall, f1  — or None if no query windows.
+    """
+    from data import build_support_query
+
+    sup_loader, q_loader = build_support_query(
+        test_df,
+        splits[uid]['train'],
+        splits[uid]['test'],
+        ar_or_va)
+
+    if len(q_loader.dataset) == 0:
+        return None
+
+    adapted_base, adapted_head = adapt_inner_loop(
+        base_model, head, sup_loader, ar_or_va,
+        inner_steps, inner_lr, device, l2_shared, l2_task)
+
+    adapted_base.eval(); adapted_head.eval()
+    probs, labels = [], []
+    with torch.no_grad():
+        for Xb, yb in q_loader:
+            probs.extend(torch.sigmoid(adapted_head(adapted_base(Xb.to(device))))
+                         .cpu().numpy().flatten())
+            labels.extend(yb.numpy().flatten())
+
+    y_true = np.array(labels).astype(int)
+    y_prob = np.array(probs)
+    y_pred = (y_prob > 0.5).astype(int)
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    acc, prec, rec, f1 = compute_metrics_from_cm(cm)
+
+    return {'participant_id': uid, 'y_true': y_true, 'y_pred': y_pred,
+            'y_pred_probs': y_prob, 'cm': cm,
+            'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1}
+
+
 def save_all_results(results, agg, output_dir, method_name, misclassification_csv):
     """
     Save the full results bundle produced by any MTL/MTML training script.

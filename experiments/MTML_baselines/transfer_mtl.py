@@ -24,10 +24,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from config import HARDCODED_SPLITS, SEED, MAX_NORM
-from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc
+from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
+from data import create_sliding_windows
+from models import BaseFeatureExtractor, TaskHead
+from training import adapt_inner_loop, compute_l2_split
 from paths import CSV_PATH, RESULTS_DIR
-from mtml_shared import (create_sliding_windows, BaseFeatureExtractor, TaskHead,
-                          adapt_inner_loop, make_kfolds)
 
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')

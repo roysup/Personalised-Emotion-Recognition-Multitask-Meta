@@ -104,6 +104,31 @@ class F1Score:
 # CROSS-VALIDATION SPLITS
 # =============================
 
+def make_kfolds(user_ids, k=5, seed=42):
+    """
+    Participant-level k-fold splits for meta-learning hyperparameter tuning.
+    Distinct from create_kfold_splits which operates on video trial lists.
+
+    Parameters
+    ----------
+    user_ids : list of participant IDs
+    k        : int — number of folds
+    seed     : int — RNG seed for deterministic permutation
+
+    Returns
+    -------
+    folds : list of k lists, each containing participant IDs for that fold
+    """
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation([int(x) for x in user_ids]).tolist()
+    folds, start = [], 0
+    for i in range(k):
+        size = len(perm) // k + (1 if i < len(perm) % k else 0)
+        folds.append(perm[start:start + size])
+        start += size
+    return folds
+
+
 def create_kfold_splits(train_videos, n_folds):
     """
     Divide train_videos (list of length 10) into n_folds folds.

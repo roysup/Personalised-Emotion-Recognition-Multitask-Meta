@@ -20,10 +20,11 @@ import torch.nn as nn
 from sklearn.metrics import confusion_matrix
 
 from config import HARDCODED_SPLITS, SEED
-from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc
+from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
+from models import BaseFeatureExtractor, TaskHead
+from training import adapt_inner_loop, evaluate_test_user
+from data import build_support_query
 from paths import CSV_PATH, RESULTS_DIR
-from mtml_shared import (BaseFeatureExtractor, TaskHead, adapt_inner_loop,
-                          make_kfolds, evaluate_test_user, build_support_query)
 
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
