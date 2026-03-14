@@ -75,6 +75,7 @@ class MetaLearner(nn.Module):
                 if m.bias is not None: nn.init.zeros_(m.bias)
 
     def forward(self, x):
+        x = x.permute(0, 2, 1)  # (batch, window, channels) → (batch, channels, window)
         x = torch.relu(self.bn1(self.conv1(x))); x = self.pool1(x)
         x = torch.relu(self.bn2(self.conv2(x))); x = self.pool2(x)
         x = x.permute(0,2,1); out, _ = self.lstm(x)

@@ -22,7 +22,8 @@ from torch.utils.data import TensorDataset, DataLoader, Sampler
 from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, roc_auc_score
 
 from config import HARDCODED_SPLITS, SEED, MAX_NORM
-from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc
+from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
+from data import create_sliding_windows
 from paths import CSV_PATH, RESULTS_DIR
 
 hardcoded_splits = HARDCODED_SPLITS
@@ -57,37 +58,6 @@ participant_ids = sorted([p for p in df['ID'].unique() if p in hardcoded_splits]
 test_participants  = [105, 109, 112, 125, 131, 132]
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
-
-
-# =============================
-# SLIDING WINDOWS
-# =============================
-def create_sliding_windows(data, window_size, stride, task_id=None):
-    X, y_ar, y_va, task_IDS, trial_ids = [], [], [], [], []
-    for t in sorted(data['Trial'].unique()):
-        d = data[data['Trial'] == t].reset_index(drop=True)
-        orig = len(d)
-        if orig < window_size:
-            pad = pd.DataFrame({'ECG': [0]*(window_size-orig), 'GSR': [0]*(window_size-orig),
-                                 'AR_Rating': [d['AR_Rating'].iloc[-1]]*(window_size-orig),
-                                 'VA_Rating': [d['VA_Rating'].iloc[-1]]*(window_size-orig),
-                                 'Trial': [t]*(window_size-orig)})
-            d = pd.concat([d, pad], ignore_index=True)
-        T = len(d); last = 0
-        for i in range(0, T - window_size + 1, stride):
-            X.append(d[['ECG', 'GSR']].iloc[i:i+window_size].values.astype(np.float32))
-            idx = min(i + window_size - 1, orig - 1)
-            y_ar.append(d['AR_Rating'].iloc[idx]); y_va.append(d['VA_Rating'].iloc[idx])
-            task_IDS.append(task_id if task_id is not None else -1); trial_ids.append(t); last = i
-        nxt = last + stride
-        if nxt < T:
-            valid = d[['ECG', 'GSR']].iloc[nxt:].values
-            pad = window_size - len(valid)
-            padded = np.pad(valid, ((0, pad), (0, 0))).astype(np.float32)
-            X.append(padded); y_ar.append(d['AR_Rating'].iloc[orig-1]); y_va.append(d['VA_Rating'].iloc[orig-1])
-            task_IDS.append(task_id if task_id is not None else -1); trial_ids.append(t)
-    return (np.array(X), np.array(y_ar, dtype=np.float32), np.array(y_va, dtype=np.float32),
-            np.array(task_IDS, dtype=np.int64), np.array(trial_ids, dtype=np.int64))
 
 
 # =============================
@@ -132,12 +102,12 @@ def make_combined_loader(tasks_dict, user_list, label_type, split='train'):
         all_X.append(X); all_y.append(y); all_tids.append(tids); all_vids.append(vids)
         local_map[lt] = uid; spt[lt] = X.shape[0]
     if not all_X:
-        return DataLoader(TensorDataset(torch.empty(0,2,WINDOW_SIZE),
+        return DataLoader(TensorDataset(torch.empty(0,WINDOW_SIZE,2),
                                         torch.empty(0,1),torch.empty(0,dtype=torch.long),
                                         torch.empty(0,dtype=torch.long)), batch_size=1), 0, local_map
     X = np.concatenate(all_X); y = np.concatenate(all_y)
     tids = np.concatenate(all_tids); vids = np.concatenate(all_vids)
-    X_t = torch.tensor(X).permute(0,2,1); y_t = torch.tensor(y).unsqueeze(1)
+    X_t = torch.tensor(X); y_t = torch.tensor(y).unsqueeze(1)  # (N, window, channels) — model permutes internally
     dataset = TensorDataset(X_t, y_t, torch.tensor(tids), torch.tensor(vids))
     sampler = BalancedSampler(tids, list(local_map.keys()), spt, seed=SEED)
     loader = DataLoader(dataset, batch_size=len(local_map), sampler=sampler, num_workers=0)
@@ -164,6 +134,7 @@ class SharedBackbone(nn.Module):
             if m.bias is not None: nn.init.zeros_(m.bias)
 
     def forward(self, x):
+        x = x.permute(0, 2, 1)  # (batch, window, channels) → (batch, channels, window)
         x = F.relu(self.bn1(self.conv1(x))); x = self.pool1(x)
         x = F.relu(self.bn2(self.conv2(x))); x = self.pool2(x)
         x = x.permute(0,2,1); out, _ = self.lstm(x)
@@ -338,7 +309,7 @@ if __name__ == '__main__':
         for uid in sorted(test_participants):
             X, y_ar, y_va, _, _ = create_sliding_windows(user_frames[uid]['test'], WINDOW_SIZE, STRIDE, task_id=0)
             if X.shape[0] == 0: continue
-            X_t = torch.tensor(X).permute(0,2,1).to(device)
+            X_t = torch.tensor(X).to(device)  # (N, window, channels) — model permutes internally
             li_ar = get_local_idx(uid, ar_map); li_va = get_local_idx(uid, va_map)
             if li_ar is None or li_va is None: continue
             tids_ar = torch.full((X_t.size(0),), li_ar, dtype=torch.long, device=device)

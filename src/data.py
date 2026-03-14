@@ -113,9 +113,9 @@ def build_support_query(task_df, support_trials, query_trials, ar_or_va='ar',
         Xq   = np.empty((0, window_size, 2), dtype=np.float32)
         y_q  = np.empty((0,), dtype=np.float32)
 
-    X_sup_t = torch.tensor(Xs).float().permute(0, 2, 1)
+    X_sup_t = torch.tensor(Xs).float()   # shape: (N, window, channels) — model permutes internally
     y_sup_t = torch.tensor(y_sup).float().unsqueeze(1)
-    X_q_t   = torch.tensor(Xq).float().permute(0, 2, 1)
+    X_q_t   = torch.tensor(Xq).float()   # shape: (N, window, channels)
     y_q_t   = torch.tensor(y_q).float().unsqueeze(1)
 
     g = torch.Generator()

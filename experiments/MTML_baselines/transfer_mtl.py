@@ -107,7 +107,7 @@ def make_combined_loader(tasks_dict, user_list, label_type, split='train'):
                           batch_size=1), 0, local_map
     X = np.concatenate(all_X); y = np.concatenate(all_y)
     tids = np.concatenate(all_tids); vids = np.concatenate(all_vids)
-    X_t = torch.tensor(X).permute(0,2,1); y_t = torch.tensor(y).unsqueeze(1)
+    X_t = torch.tensor(X); y_t = torch.tensor(y).unsqueeze(1)  # (N, window, channels) — model permutes internally
     dataset = TensorDataset(X_t, y_t, torch.tensor(tids), torch.tensor(vids))
     sampler = BalancedSampler(tids, list(local_map.keys()), spt, SEED)
     loader = DataLoader(dataset, batch_size=len(local_map), sampler=sampler, num_workers=0)
@@ -184,7 +184,7 @@ def finetune_user(base_model, X, y, lr, pid):
     model = add_new_head(model)
     local_idx = model.num_tasks - 1
     g = torch.Generator(); g.manual_seed(SEED + pid)
-    loader = DataLoader(TensorDataset(torch.tensor(X).permute(0,2,1),
+    loader = DataLoader(TensorDataset(torch.tensor(X).float(),
                                       torch.tensor(y).float().unsqueeze(1)),
                         batch_size=FT_BATCH, shuffle=True, generator=g, num_workers=0)
     opt = optim.Adam(model.parameters(), lr=lr)
@@ -206,7 +206,7 @@ def finetune_user(base_model, X, y, lr, pid):
 
 def eval_user(model, local_idx, X, y):
     model.eval()
-    loader = DataLoader(TensorDataset(torch.tensor(X).permute(0,2,1),
+    loader = DataLoader(TensorDataset(torch.tensor(X).float(),
                                       torch.tensor(y).float().unsqueeze(1)),
                         batch_size=FT_BATCH, shuffle=False, num_workers=0)
     probs, labels = [], []
