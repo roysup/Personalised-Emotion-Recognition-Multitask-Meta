@@ -4,7 +4,8 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix
 
-from utils import compute_metrics_from_cm, safe_roc_auc
+from utils import (compute_metrics_from_cm, safe_roc_auc,
+                   aggregate_results, aggregate_mtml_results)
 
 
 # =============================
@@ -354,50 +355,8 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
     return results
 
 
-def aggregate_results(results):
-    """
-    Concatenate per-participant arrays and compute aggregate confusion matrix + metrics.
-
-    Returns
-    -------
-    dict with keys: cm_ar, cm_va, ar_acc/precision/recall/f1, va_*, auc_ar, auc_va,
-                    fpr_ar, tpr_ar, fpr_va, tpr_va
-    """
-    all_true_ar  = np.concatenate([r['y_true_ar']       for r in results])
-    all_pred_ar  = np.concatenate([r['y_pred_ar']       for r in results])
-    all_probs_ar = np.concatenate([r['y_pred_probs_ar'] for r in results])
-    all_true_va  = np.concatenate([r['y_true_va']       for r in results])
-    all_pred_va  = np.concatenate([r['y_pred_va']       for r in results])
-    all_probs_va = np.concatenate([r['y_pred_probs_va'] for r in results])
-
-    cm_ar = confusion_matrix(all_true_ar, all_pred_ar, labels=[0, 1])
-    cm_va = confusion_matrix(all_true_va, all_pred_va, labels=[0, 1])
-
-    ar_acc, ar_prec, ar_rec, ar_f1 = compute_metrics_from_cm(cm_ar)
-    va_acc, va_prec, va_rec, va_f1 = compute_metrics_from_cm(cm_va)
-
-    auc_ar, fpr_ar, tpr_ar = safe_roc_auc(all_true_ar, all_probs_ar)
-    auc_va, fpr_va, tpr_va = safe_roc_auc(all_true_va, all_probs_va)
-
-    return {
-        'cm_ar':        cm_ar,       'cm_va':        cm_va,
-        'ar_acc':       ar_acc,      'va_acc':       va_acc,
-        'ar_precision': ar_prec,     'va_precision': va_prec,
-        'ar_recall':    ar_rec,      'va_recall':    va_rec,
-        'ar_f1':        ar_f1,       'va_f1':        va_f1,
-        'ar_auc':       auc_ar,      'va_auc':       auc_va,
-        'fpr_ar':       fpr_ar,      'tpr_ar':       tpr_ar,
-        'fpr_va':       fpr_va,      'tpr_va':       tpr_va,
-    }
 
 
-# =============================
-# SAVE ALL RESULTS
-# =============================
-
-# =============================
-# META-LEARNING UTILITIES
-# =============================
 
 
 
@@ -518,67 +477,6 @@ def evaluate_test_user(base_model, head, test_df, splits, uid, ar_or_va,
             'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1}
 
 
-def save_all_results(results, agg, output_dir, method_name, misclassification_csv):
-    """
-    Save the full results bundle produced by any MTL/MTML training script.
-
-    Parameters
-    ----------
-    results              : list of per-participant result dicts
-    agg                  : dict returned by aggregate_results()
-    output_dir           : str — directory to write all files into
-    method_name          : str — used in plot titles, e.g. 'MTL-HPS'
-    misclassification_csv: str — filename only (not full path), e.g.
-                           'VREED_hps_misclassification_rates.csv'
-
-    Writes
-    ------
-    per_participant_results.csv
-    <misclassification_csv>
-    ar_cm.png, va_cm.png
-    ar_roc.png, va_roc.png
-    (pickle saving is left to the caller because the pkl filename and any
-     extra keys vary per script)
-    """
-    import os
-    from utils import (save_misclassification_rates, build_results_table,
-                       compute_per_participant_stds, print_determinism_summary,
-                       print_metrics_detailed, save_confusion_matrix_plot,
-                       save_roc_plot)
-
-    save_misclassification_rates(
-        results, [r['participant_id'] for r in results],
-        os.path.join(output_dir, misclassification_csv))
-
-    results_df = build_results_table(results)
-    results_df.to_csv(os.path.join(output_dir, 'per_participant_results.csv'), index=False)
-    print(results_df.to_string(index=False))
-
-    ar_stds = compute_per_participant_stds(results, 'ar')
-    va_stds = compute_per_participant_stds(results, 'va')
-
-    save_confusion_matrix_plot(
-        agg['cm_ar'], f'AR Confusion Matrix ({method_name})',
-        os.path.join(output_dir, 'ar_cm.png'))
-    save_confusion_matrix_plot(
-        agg['cm_va'], f'VA Confusion Matrix ({method_name})',
-        os.path.join(output_dir, 'va_cm.png'), cmap='Greens')
-    save_roc_plot(agg['fpr_ar'], agg['tpr_ar'], agg['ar_auc'],
-                  f'ROC AR ({method_name})', os.path.join(output_dir, 'ar_roc.png'))
-    save_roc_plot(agg['fpr_va'], agg['tpr_va'], agg['va_auc'],
-                  f'ROC VA ({method_name})', os.path.join(output_dir, 'va_roc.png'))
-
-    print_metrics_detailed('AR', agg['ar_acc'], agg['ar_precision'],
-                           agg['ar_recall'], agg['ar_f1'], agg['ar_auc'])
-    print_metrics_detailed('VA', agg['va_acc'], agg['va_precision'],
-                           agg['va_recall'], agg['va_f1'], agg['va_auc'])
-    print_determinism_summary(
-        {f'ar_{k}': agg[f'ar_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
-        {f'va_{k}': agg[f'va_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
-        ar_stds, va_stds)
-
-    return results_df, ar_stds, va_stds
-
 # =============================
 # MTL EVALUATION  (was _evaluate_all duplicated in mtl_hps / mtl_pcgrad / mtl_uw)
 # =============================
@@ -647,44 +545,66 @@ def evaluate_mtl_all(model_ar, model_va, test_data_dict,
 
 
 # =============================
-# MTML AGGREGATION  (was local aggregate() duplicated in si / pure_meta / reptile_*)
+# SAVE ALL RESULTS
 # =============================
 
-def aggregate_mtml_results(results_ar, results_va):
+def save_all_results(results, agg, output_dir, method_name, misclassification_csv):
     """
-    Concatenate per-participant MTML results and return aggregate metrics for
-    both AR and VA in one call.  Result dicts must have keys:
-    y_true, y_pred, y_pred_probs, (optionally accuracy/precision/recall/f1).
+    Save the full results bundle produced by any MTL/MTML training script.
 
-    Returns
-    -------
-    dict with keys mirroring aggregate_results():
-        cm_ar, cm_va,
-        ar_acc, ar_precision, ar_recall, ar_f1, ar_auc, fpr_ar, tpr_ar,
-        va_acc, va_precision, va_recall, va_f1, va_auc, fpr_va, tpr_va,
-        all_true_ar, all_probs_ar, all_true_va, all_probs_va
+    Parameters
+    ----------
+    results              : list of per-participant result dicts
+    agg                  : dict returned by aggregate_results()
+    output_dir           : str — directory to write all files into
+    method_name          : str — used in plot titles, e.g. 'MTL-HPS'
+    misclassification_csv: str — filename only (not full path), e.g.
+                           'VREED_hps_misclassification_rates.csv'
+
+    Writes
+    ------
+    per_participant_results.csv
+    <misclassification_csv>
+    ar_cm.png, va_cm.png
+    ar_roc.png, va_roc.png
+    (pickle saving is left to the caller because the pkl filename and any
+     extra keys vary per script)
     """
-    def _agg_one(results, label):
-        all_true  = np.concatenate([r['y_true']       for r in results])
-        all_pred  = np.concatenate([r['y_pred']        for r in results])
-        all_probs = np.concatenate([r['y_pred_probs']  for r in results])
-        cm = confusion_matrix(all_true, all_pred, labels=[0, 1])
-        acc, prec, rec, f1 = compute_metrics_from_cm(cm)
-        auc_val, fpr, tpr  = safe_roc_auc(all_true, all_probs)
-        print(f"\n{label}: Acc={acc:.4f} F1={f1:.4f} AUC={auc_val:.4f}")
-        return all_true, all_probs, cm, acc, prec, rec, f1, auc_val, fpr, tpr
+    import os
+    from utils import (save_misclassification_rates, build_results_table,
+                       compute_per_participant_stds, print_determinism_summary,
+                       print_metrics_detailed, save_confusion_matrix_plot,
+                       save_roc_plot)
 
-    all_true_ar, all_probs_ar, cm_AR, ar_acc, ar_prec, ar_rec, ar_f1, ar_auc, ar_fpr, ar_tpr = _agg_one(results_ar, 'AR')
-    all_true_va, all_probs_va, cm_VA, va_acc, va_prec, va_rec, va_f1, va_auc, va_fpr, va_tpr = _agg_one(results_va, 'VA')
+    save_misclassification_rates(
+        results, [r['participant_id'] for r in results],
+        os.path.join(output_dir, misclassification_csv))
 
-    return {
-        'cm_ar': cm_AR,         'cm_va': cm_VA,
-        'ar_acc': ar_acc,       'ar_precision': ar_prec,
-        'ar_recall': ar_rec,    'ar_f1': ar_f1,
-        'ar_auc': ar_auc,       'fpr_ar': ar_fpr,  'tpr_ar': ar_tpr,
-        'va_acc': va_acc,       'va_precision': va_prec,
-        'va_recall': va_rec,    'va_f1': va_f1,
-        'va_auc': va_auc,       'fpr_va': va_fpr,  'tpr_va': va_tpr,
-        'all_true_ar': all_true_ar,   'all_probs_ar': all_probs_ar,
-        'all_true_va': all_true_va,   'all_probs_va': all_probs_va,
-    }
+    results_df = build_results_table(results)
+    results_df.to_csv(os.path.join(output_dir, 'per_participant_results.csv'), index=False)
+    print(results_df.to_string(index=False))
+
+    ar_stds = compute_per_participant_stds(results, 'ar')
+    va_stds = compute_per_participant_stds(results, 'va')
+
+    save_confusion_matrix_plot(
+        agg['cm_ar'], f'AR Confusion Matrix ({method_name})',
+        os.path.join(output_dir, 'ar_cm.png'))
+    save_confusion_matrix_plot(
+        agg['cm_va'], f'VA Confusion Matrix ({method_name})',
+        os.path.join(output_dir, 'va_cm.png'), cmap='Greens')
+    save_roc_plot(agg['fpr_ar'], agg['tpr_ar'], agg['ar_auc'],
+                  f'ROC AR ({method_name})', os.path.join(output_dir, 'ar_roc.png'))
+    save_roc_plot(agg['fpr_va'], agg['tpr_va'], agg['va_auc'],
+                  f'ROC VA ({method_name})', os.path.join(output_dir, 'va_roc.png'))
+
+    print_metrics_detailed('AR', agg['ar_acc'], agg['ar_precision'],
+                           agg['ar_recall'], agg['ar_f1'], agg['ar_auc'])
+    print_metrics_detailed('VA', agg['va_acc'], agg['va_precision'],
+                           agg['va_recall'], agg['va_f1'], agg['va_auc'])
+    print_determinism_summary(
+        {f'ar_{k}': agg[f'ar_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
+        {f'va_{k}': agg[f'va_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
+        ar_stds, va_stds)
+
+    return results_df, ar_stds, va_stds
