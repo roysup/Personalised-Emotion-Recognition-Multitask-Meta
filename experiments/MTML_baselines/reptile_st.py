@@ -15,7 +15,7 @@ from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
 from models import BaseFeatureExtractor, TaskHead
 from training import adapt_inner_loop, evaluate_test_user, aggregate_mtml_results
 from data import build_support_query
-from dataset_configs.vreed import load_vreed_df_mtml
+from dataset_configs.vreed import load_vreed_df
 
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
@@ -32,7 +32,7 @@ print(f"Device: {device}\nOutput: {output_dir}")
 # =============================
 # DATA
 # =============================
-df = load_vreed_df_mtml()
+df = load_vreed_df(mode='mtml')
 
 participant_ids   = sorted([p for p in df['ID'].unique() if p in hardcoded_splits])
 test_participants  = [105,109,112,125,131,132]

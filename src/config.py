@@ -12,6 +12,7 @@ os.environ["PYTHONHASHSEED"] = str(42)
 import gc
 import copy
 import pickle
+from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
@@ -28,6 +29,7 @@ from sklearn.metrics import (
     roc_curve,
     auc,
     f1_score,
+    mutual_info_score,
 )
 
 # =============================
@@ -64,6 +66,10 @@ MTL_SHARED_LR = 3e-4
 MTL_TASK_LR   = 1e-4
 MTL_L2_TASK   = 1e-5
 MTL_L2_SHARED = 0.0
+
+# Aliases used by reptile scripts (backbone L2 is always 0, task L2 always 1e-5)
+L2_SHARED = MTL_L2_SHARED  # 0.0
+L2_TASK   = MTL_L2_TASK    # 1e-5
 
 # =============================
 # META-LEARNING DEFAULTS

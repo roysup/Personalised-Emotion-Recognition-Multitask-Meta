@@ -26,7 +26,8 @@ from config import CSV_PATH, PKL_PATH
 
 participant_ids = sorted(HARDCODED_SPLITS.keys())
 
-def load_vreed_df(preserve_trial_order: bool = False) -> pd.DataFrame:
+def load_vreed_df(preserve_trial_order: bool = False,
+                  mode: str = 'standard') -> pd.DataFrame:
     """
     Load and clean the VREED CSV.
 
@@ -34,11 +35,16 @@ def load_vreed_df(preserve_trial_order: bool = False) -> pd.DataFrame:
     ----------
     preserve_trial_order : bool
         If True, reorder rows using the canonical trial ordering from the pkl
-        (required by pstl.py). If False (default), keep the CSV row order.
+        (required by pstl.py and si.py). Only used when mode='standard'.
+    mode : str
+        'standard' — default. Returns ECG, GSR, AR/VA_Rating, Trial, ID, ID_video,
+                      trial_global. Used by MTL baselines and SI/TL-FT scripts.
+        'mtml'     — Returns the same columns plus Trial aliased from Num_Code,
+                     sorted by ID then Trial. Used by MTML/meta-learning scripts.
 
     Returns
     -------
-    df : DataFrame with columns ECG, GSR, AR_Rating, VA_Rating, Trial, ID, ID_video, ...
+    df : cleaned DataFrame
     """
     df = pd.read_csv(CSV_PATH)
     df = df.drop(columns=['ECG', 'GSR', 'Unnamed: 0.1', 'Unnamed: 0', 'Trial'],
@@ -46,6 +52,13 @@ def load_vreed_df(preserve_trial_order: bool = False) -> pd.DataFrame:
     df = df.rename(columns={'ECG_scaled': 'ECG', 'GSR_scaled': 'GSR',
                             'Num_Code': 'Trial'})
 
+    if mode == 'mtml':
+        df = df.rename(columns={'Trial': 'video'})
+        df['Trial'] = df['video']
+        df = df.sort_values(['ID', 'Trial']).reset_index(drop=True)
+        return df
+
+    # mode == 'standard'
     if preserve_trial_order:
         with open(PKL_PATH, 'rb') as f:
             unique_id_trials = sorted(pickle.load(f))
@@ -55,30 +68,6 @@ def load_vreed_df(preserve_trial_order: bool = False) -> pd.DataFrame:
             reordered = pd.concat([reordered, df[df['ID_video'] == id_trial]])
         df = reordered.reset_index(drop=True)
 
-    # Global trial key — unique across participants, used by PSTL for pooled windowing
     df['trial_global'] = df['ID'].astype(str) + '_' + df['Trial'].astype(str)
-
     return df
 
-
-def load_vreed_df_mtml() -> pd.DataFrame:
-    """
-    Load and clean the VREED CSV for MTML scripts.
-
-    Identical to load_vreed_df() but adds a 'Trial' column aliased from the
-    numeric video code (Num_Code → video → Trial), which the MTML scripts
-    require for trial-level indexing in create_sliding_windows.
-
-    Returns
-    -------
-    df : DataFrame with columns ECG, GSR, AR_Rating, VA_Rating, Trial, ID, ID_video, ...
-         sorted by ID then Trial for deterministic ordering.
-    """
-    df = pd.read_csv(CSV_PATH)
-    df = df.drop(columns=['ECG', 'GSR', 'Unnamed: 0.1', 'Unnamed: 0', 'Trial'],
-                 errors='ignore')
-    df = df.rename(columns={'ECG_scaled': 'ECG', 'GSR_scaled': 'GSR',
-                            'Num_Code': 'video'})
-    df['Trial'] = df['video']
-    df = df.sort_values(['ID', 'Trial']).reset_index(drop=True)
-    return df
