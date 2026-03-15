@@ -15,10 +15,7 @@ from models import MTLModel
 from utils import set_all_seeds, compute_metrics_from_cm, create_kfold_splits, aggregate_results
 from training import save_all_results, evaluate_mtl_all
 
-BATCH_SIZE = MTL_BATCH_SIZE
 NUM_TASKS  = len(participant_ids)
-SHARED_LR  = MTL_SHARED_LR
-TASK_LR    = MTL_TASK_LR
 
 OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -41,7 +38,7 @@ def _l2_task_only(model):
 def _train_mtl(label_type, lr_shared, lr_task, l2_fn, train_data_dict):
     loader, _, _ = make_mtl_loader(
         train_data_dict, WINDOW_SIZE, STRIDE,
-        label_type=label_type, batch_size=BATCH_SIZE, seed=SEED)
+        label_type=label_type, batch_size=MTL_BATCH_SIZE, seed=SEED)
 
     model = MTLModel(NUM_TASKS).to(device)
     opt   = optim.Adam([
@@ -101,7 +98,7 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
                     set_all_seeds(SEED)
                     loader, _, _ = make_mtl_loader(
                         train_data, WINDOW_SIZE, STRIDE,
-                        label_type=label_type, batch_size=BATCH_SIZE, seed=SEED)
+                        label_type=label_type, batch_size=MTL_BATCH_SIZE, seed=SEED)
 
                     model = MTLModel(NUM_TASKS).to(device)
                     opt   = optim.Adam([
@@ -166,8 +163,8 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
 # MAIN
 # =============================
 if __name__ == '__main__':
-    best_sh_ar, best_tk_ar, best_l2_ar = hyperparameter_tuning('ar', [SHARED_LR], [TASK_LR], [L2_TASK])
-    best_sh_va, best_tk_va, best_l2_va = hyperparameter_tuning('va', [SHARED_LR], [TASK_LR], [L2_TASK])
+    best_sh_ar, best_tk_ar, best_l2_ar = hyperparameter_tuning('ar', [MTL_SHARED_LR], [MTL_TASK_LR], [L2_TASK])
+    best_sh_va, best_tk_va, best_l2_va = hyperparameter_tuning('va', [MTL_SHARED_LR], [MTL_TASK_LR], [L2_TASK])
 
     train_data, test_data = {}, {}
     for task_idx, pid in enumerate(participant_ids):

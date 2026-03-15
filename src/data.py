@@ -172,44 +172,6 @@ class BalancedSampler(Sampler):
 # LOADER BUILDERS
 # =============================
 
-def make_single_task_loaders(tasks_dict, window_size, stride,
-                             label_type, batch_size, seed,
-                             split_type='train', shuffle=True):
-    """
-    Build one DataLoader per participant (used by STL and PSTL per-participant eval).
-
-    Returns
-    -------
-    loaders : dict {task_idx: DataLoader}
-    """
-    loaders = {}
-    for task_idx in sorted(tasks_dict.keys()):
-        task_data = tasks_dict[task_idx]
-        X, y_ar, y_va, _, trial_ids = create_sliding_windows(
-            task_data, window_size, stride, task_id=task_idx)
-
-        if len(X) == 0:
-            print(f"  Warning: no windows for task {task_idx} ({split_type}), skipping.")
-            continue
-
-        #X_t     = torch.tensor(X,          dtype=torch.float32).permute(0, 2, 1)
-        X_t = torch.tensor(X, dtype=torch.float32)
-        y_t     = torch.tensor(y_ar if label_type == 'ar' else y_va,
-                               dtype=torch.float32).unsqueeze(1)
-        tids_t  = torch.tensor(trial_ids,  dtype=torch.long)
-        dataset = TensorDataset(X_t, y_t, tids_t)
-
-        if shuffle:
-            g = torch.Generator()
-            g.manual_seed(seed)
-            loader = DataLoader(dataset, batch_size=batch_size,
-                                shuffle=True, num_workers=0, generator=g)
-        else:
-            loader = DataLoader(dataset, batch_size=batch_size,
-                                shuffle=False, num_workers=0)
-        loaders[task_idx] = loader
-    return loaders
-
 
 def make_mtl_loader(tasks_dict, window_size, stride,
                     label_type, batch_size, seed):

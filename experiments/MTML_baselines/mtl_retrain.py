@@ -24,10 +24,10 @@ from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, roc_auc_
 from config import (HARDCODED_SPLITS, SEED, MAX_NORM, RETRAIN_LR,
                     L2_SHARED, L2_TASK, TEST_PARTICIPANTS)
 from config import EPOCHS, WINDOW_SIZE, STRIDE, N_FOLDS, RESULTS_DIR
-from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
+from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds, aggregate_mtml_results
 from data import create_sliding_windows, BalancedSampler
 from dataset_configs.vreed import load_vreed_df
-from models import BaseFeatureExtractor
+from utils import compute_per_participant_stds, print_determinism_summary, prefix_results
 
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
@@ -141,15 +141,6 @@ def compute_l2(model):
 # =============================
 # HYPERPARAMETER TUNING
 # =============================
-def make_folds(user_ids, k=5):
-    rng = np.random.default_rng(SEED)
-    perm = rng.permutation(user_ids).tolist()
-    folds, start = [], 0
-    for i in range(k):
-        size = len(perm)//k + (1 if i < len(perm)%k else 0)
-        folds.append(sorted(perm[start:start+size])); start += size
-    return folds
-
 
 def train_fold(model, loader, lr, epochs):
     opt = optim.Adam(model.parameters(), lr=lr)
@@ -180,7 +171,7 @@ def eval_fold(model, loader, local_map):
 
 def hyperparameter_tuning(label_type='ar'):
     print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type.upper()}] MTL-Retrain\n{'='*60}")
-    results = []; train_folds = make_folds(train_participants)
+    results = []; train_folds = make_kfolds(train_participants)
     for lr in learning_rates:
         fold_f1s = []
         for fold_i in range(N_FOLDS):
@@ -288,18 +279,14 @@ if __name__ == '__main__':
                                  'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1})
             print(f"  Participant {uid}: AR acc={results_ar[-1]['accuracy']:.4f} | VA acc={results_va[-1]['accuracy']:.4f}")
 
-    def aggregate(results, label):
-        all_true  = np.concatenate([r['y_true'] for r in results])
-        all_pred  = np.concatenate([r['y_pred'] for r in results])
-        all_probs = np.concatenate([r['y_pred_probs'] for r in results])
-        cm = confusion_matrix(all_true, all_pred, labels=[0,1])
-        acc, prec, rec, f1 = compute_metrics_from_cm(cm)
-        auc_val, fpr, tpr = safe_roc_auc(all_true, all_probs)
-        print(f"\n{label}: Acc={acc:.4f} F1={f1:.4f} AUC={auc_val:.4f}")
-        return all_true, all_probs, cm, acc, prec, rec, f1, auc_val, fpr, tpr
-
-    all_true_ar, all_probs_ar, cm_AR, ar_acc, ar_prec, ar_rec, ar_f1, ar_auc, ar_fpr, ar_tpr = aggregate(results_ar, 'AR')
-    all_true_va, all_probs_va, cm_VA, va_acc, va_prec, va_rec, va_f1, va_auc, va_fpr, va_tpr = aggregate(results_va, 'VA')
+    agg = aggregate_mtml_results(results_ar, results_va)
+    cm_AR, cm_VA = agg['cm_ar'], agg['cm_va']
+    ar_acc, ar_prec, ar_rec, ar_f1, ar_auc = agg['ar_acc'], agg['ar_precision'], agg['ar_recall'], agg['ar_f1'], agg['ar_auc']
+    va_acc, va_prec, va_rec, va_f1, va_auc = agg['va_acc'], agg['va_precision'], agg['va_recall'], agg['va_f1'], agg['va_auc']
+    ar_fpr, ar_tpr = agg['fpr_ar'], agg['tpr_ar']
+    va_fpr, va_tpr = agg['fpr_va'], agg['tpr_va']
+    all_true_ar, all_probs_ar = agg['all_true_ar'], agg['all_probs_ar']
+    all_true_va, all_probs_va = agg['all_true_va'], agg['all_probs_va']
 
     roc_data = {'AR': {'true': all_true_ar, 'probs': all_probs_ar},
                 'VA': {'true': all_true_va, 'probs': all_probs_va}}
@@ -322,16 +309,9 @@ if __name__ == '__main__':
     # =============================
     # DETERMINISM SUMMARY
     # =============================
-    from utils import compute_per_participant_stds, print_determinism_summary
 
-    def _prefix(results, prefix):
-        return [{f"{prefix}_acc": r["accuracy"], f"{prefix}_precision": r["precision"],
-                 f"{prefix}_recall": r["recall"], f"{prefix}_f1": r["f1"],
-                 f"y_true_{prefix}": r["y_true"], f"y_pred_probs_{prefix}": r["y_pred_probs"]}
-                for r in results]
-
-    ar_stds = compute_per_participant_stds(_prefix(results_ar, "ar"), "ar")
-    va_stds = compute_per_participant_stds(_prefix(results_va, "va"), "va")
+    ar_stds = compute_per_participant_stds(prefix_results(results_ar, "ar"), "ar")
+    va_stds = compute_per_participant_stds(prefix_results(results_va, "va"), "va")
     print_determinism_summary(
         {f"ar_{k}": final_results[f"ar_{k}"] for k in ["auc", "acc", "precision", "recall", "f1"]},
         {f"va_{k}": final_results[f"va_{k}"] for k in ["auc", "acc", "precision", "recall", "f1"]},

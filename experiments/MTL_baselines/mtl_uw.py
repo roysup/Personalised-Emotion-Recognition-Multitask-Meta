@@ -15,10 +15,7 @@ from models import MTLModelUW
 from utils import set_all_seeds, compute_metrics_from_cm, aggregate_results
 from training import save_all_results, evaluate_mtl_all
 
-BATCH_SIZE  = MTL_BATCH_SIZE
 NUM_TASKS  = len(participant_ids)
-SHARED_LR   = MTL_SHARED_LR
-TASK_LR     = MTL_TASK_LR
 LOG_VAR_LR  = {'ar': 4e-3, 'va': 1e-3}
 
 OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_uw_results')
@@ -38,7 +35,7 @@ df = load_vreed_df()
 def _train_uw(label_type, lr_shared, lr_task, lr_logvar, l2_task, train_data_dict):
     loader, _, _ = make_mtl_loader(
         train_data_dict, WINDOW_SIZE, STRIDE,
-        label_type=label_type, batch_size=BATCH_SIZE, seed=SEED)
+        label_type=label_type, batch_size=MTL_BATCH_SIZE, seed=SEED)
 
     model = MTLModelUW(NUM_TASKS).to(device)
     opt   = optim.Adam([
@@ -103,11 +100,11 @@ if __name__ == '__main__':
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
-    model_ar = _train_uw('ar', SHARED_LR, TASK_LR, LOG_VAR_LR['ar'], L2_TASK, train_data)
+    model_ar = _train_uw('ar', MTL_SHARED_LR, MTL_TASK_LR, LOG_VAR_LR['ar'], L2_TASK, train_data)
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
-    model_va = _train_uw('va', SHARED_LR, TASK_LR, LOG_VAR_LR['va'], L2_TASK, train_data)
+    model_va = _train_uw('va', MTL_SHARED_LR, MTL_TASK_LR, LOG_VAR_LR['va'], L2_TASK, train_data)
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = evaluate_mtl_all(model_ar, model_va, test_data,

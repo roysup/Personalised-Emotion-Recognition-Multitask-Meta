@@ -17,10 +17,7 @@ from utils import set_all_seeds, compute_metrics_from_cm, create_kfold_splits, a
 from training import (save_all_results,
                       evaluate_mtl_all, _pcgrad_project)
 
-BATCH_SIZE = MTL_BATCH_SIZE
 NUM_TASKS  = len(participant_ids)
-SHARED_LR  = MTL_SHARED_LR
-TASK_LR    = MTL_TASK_LR
 
 OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_pcgrad_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -83,7 +80,7 @@ def _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids, l2_task):
 def _train_pcgrad(label_type, lr_shared, lr_task, l2_task, train_data_dict):
     loader, _, _ = make_mtl_loader(
         train_data_dict, WINDOW_SIZE, STRIDE,
-        label_type=label_type, batch_size=BATCH_SIZE, seed=SEED)
+        label_type=label_type, batch_size=MTL_BATCH_SIZE, seed=SEED)
 
     model = MTLModel(NUM_TASKS).to(device)
     opt   = optim.Adam([
@@ -133,11 +130,11 @@ if __name__ == '__main__':
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
-    model_ar = _train_pcgrad('ar', SHARED_LR, TASK_LR, L2_TASK, train_data)
+    model_ar = _train_pcgrad('ar', MTL_SHARED_LR, MTL_TASK_LR, L2_TASK, train_data)
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
-    model_va = _train_pcgrad('va', SHARED_LR, TASK_LR, L2_TASK, train_data)
+    model_va = _train_pcgrad('va', MTL_SHARED_LR, MTL_TASK_LR, L2_TASK, train_data)
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = evaluate_mtl_all(model_ar, model_va, test_data,
