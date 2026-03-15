@@ -9,16 +9,14 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
 import matplotlib.pyplot as plt
 import seaborn as sns
-from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
+from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,, aggregate_mtml_results
                    create_kfold_splits, make_kfolds,
                    compute_per_participant_stds, print_determinism_summary,
                    prefix_results)
-from data import create_sliding_windows, make_array_loader
+from data import create_sliding_windows, arrays_to_loader
 from models import SingleTaskModel
 from dataset_configs.vreed import load_vreed_df
-from training import aggregate_mtml_results
-
-hardcoded_splits = HARDCODED_SPLITS
+from training import hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_TF')
 os.makedirs(output_dir, exist_ok=True)
@@ -68,7 +66,7 @@ def pretrain(X, y, lr, l2_lambda, epochs):
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
-    loader  = make_array_loader(X, y, BATCH_SIZE, shuffle=True, seed=SEED)
+    loader  = arrays_to_loader(X, y, BATCH_SIZE, shuffle=True, seed=SEED)
     for ep in range(epochs):
         model.train(); run = 0.0
         for X_b, y_b in loader:
@@ -91,7 +89,7 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
-    loader  = make_array_loader(X, y, BATCH_SIZE, shuffle=True, seed=SEED + pid)
+    loader  = arrays_to_loader(X, y, BATCH_SIZE, shuffle=True, seed=SEED + pid)
     for ep in range(epochs):
         model.train(); run = 0.0
         for X_b, y_b in loader:
@@ -110,7 +108,7 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
 
 def eval_model(model, X, y):
     model.eval()
-    loader = make_array_loader(X, y, BATCH_SIZE, shuffle=False)
+    loader = arrays_to_loader(X, y, BATCH_SIZE, shuffle=False)
     probs, trues = [], []
     with torch.no_grad():
         for X_b, y_b in loader:

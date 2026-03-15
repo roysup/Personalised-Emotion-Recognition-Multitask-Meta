@@ -10,12 +10,11 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
 
 
-from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
+from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,, aggregate_mtml_results
                    compute_per_participant_stds, print_determinism_summary,
                    prefix_results)
 from models import BaseFeatureExtractor, TaskHead
-from training import adapt_inner_loop, evaluate_test_user, aggregate_mtml_results
-from data import build_support_query
+from training import adapt_inner_loop, evaluate_test_user, from data import build_support_query
 from dataset_configs.vreed import load_vreed_df
 
 hardcoded_splits = HARDCODED_SPLITS

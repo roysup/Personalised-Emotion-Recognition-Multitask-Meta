@@ -132,43 +132,44 @@ def build_support_query(task_df, support_trials, query_trials, ar_or_va='ar',
     return sup_loader, q_loader
 
 
-# =============================
-# BALANCED SAMPLER (MTL)
-# =============================
-
 class BalancedSampler(Sampler):
     """
-    Balanced sampler for multi-task learning.
-    Each batch contains exactly one sample per active task (participant).
-    Uses oversampling for tasks with fewer samples than the maximum.
-
-    Parameters
-    ----------
-    task_ids         : int64 numpy array — task ID per sample in the dataset
-    present_task_ids : list of int — which task IDs are actually present
-    samples_per_task : dict {task_id: count}
-    seed             : int or None
+    Ensures each batch contains exactly one sample per participant.
+    Uses a numpy Generator for deterministic, stateful shuffling across epochs.
     """
 
-    def __init__(self, task_ids, present_task_ids, samples_per_task, seed=None):
-        self.present_tasks = sorted(set(present_task_ids))
-        self.num_tasks     = len(self.present_tasks)
-        self.num_batches   = max(samples_per_task[t] for t in self.present_tasks)
-        self.rng           = np.random.default_rng(seed)
-        self.task_indices  = {t: np.where(task_ids == t)[0] for t in self.present_tasks}
+    def __init__(self, task_ids, num_tasks, samples_per_task, seed=None):
+        self.task_ids        = task_ids
+        self.num_tasks       = num_tasks
+        self.samples_per_task = samples_per_task
+        self.num_batches     = max(samples_per_task.values())
+        self.rng             = np.random.default_rng(seed)
+
+        self.task_indices = {}
+        for t in range(num_tasks):
+            idx = np.where(task_ids == t)[0]
+            if len(idx) == 0:
+                raise ValueError(f"No samples for task {t}")
+            self.task_indices[t] = idx
 
     def __iter__(self):
         indices = []
-        for t in self.present_tasks:
+        for t in range(self.num_tasks):
             idx = self.task_indices[t]
             if len(idx) < self.num_batches:
-                # Oversample smaller tasks so all tasks have equal representation
                 sampled = self.rng.choice(idx, size=self.num_batches, replace=True)
             else:
-                sampled = self.rng.permutation(idx)[:self.num_batches]
+                sampled = self.rng.permutation(idx)
+                if len(idx) > self.num_batches:
+                    sampled = sampled[:self.num_batches]
+            if len(sampled) < self.num_batches:
+                extra = self.rng.choice(idx,
+                                        size=self.num_batches - len(sampled),
+                                        replace=True)
+                sampled = np.concatenate([sampled, extra])
             indices.append(sampled)
 
-        indices     = np.array(indices).T.flatten()
+        indices = np.array(indices).T.flatten()
         batch_order = self.rng.permutation(self.num_batches)
 
         shuffled = []
@@ -178,6 +179,7 @@ class BalancedSampler(Sampler):
 
     def __len__(self):
         return self.num_batches * self.num_tasks
+
 
 
 # =============================
@@ -224,7 +226,7 @@ def make_single_task_loaders(tasks_dict, window_size, stride,
 
 
 def make_mtl_loader(tasks_dict, window_size, stride,
-                     label_type, batch_size, seed):
+                    label_type, batch_size, seed):
     """
     Combine all participants into one dataset with a BalancedSampler (used by MTL variants).
 
@@ -263,14 +265,14 @@ def make_mtl_loader(tasks_dict, window_size, stride,
     trids_t  = torch.tensor(all_trial_ids, dtype=torch.long)
 
     dataset = TensorDataset(X_t, y_t, tids_t, trids_t)
-    sampler = BalancedSampler(all_task_ids, list(samples_per_task.keys()), samples_per_task, seed=seed)
+    sampler = BalancedSampler(all_task_ids, num_tasks, samples_per_task, seed=seed)
     loader  = DataLoader(dataset, batch_size=batch_size,
                          sampler=sampler, num_workers=0)
     return loader, len(dataset), sampler
 
 
 # =============================
-# ARRAY LOADER
+# ARRAY LOADER  (was make_loader() duplicated in si / stl / tlft / pstl)
 # =============================
 
 def arrays_to_loader(X, y, batch_size, shuffle, seed=42):

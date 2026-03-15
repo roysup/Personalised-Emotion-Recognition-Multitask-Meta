@@ -9,14 +9,14 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
-from data import create_sliding_windows, make_combined_mtl_loader
+from data import create_sliding_windows, make_mtl_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import MTLModelUW
-from utils import set_all_seeds, compute_metrics_from_cm
-from training import aggregate_results, save_all_results, evaluate_mtl_all
+from utils import set_all_seeds, compute_metrics_from_cm, aggregate_results
+from training import save_all_results, evaluate_mtl_all
 
 BATCH_SIZE  = MTL_BATCH_SIZE
-NUM_TASKS   = 26
+NUM_TASKS  = len(participant_ids)
 SHARED_LR   = MTL_SHARED_LR
 TASK_LR     = MTL_TASK_LR
 LOG_VAR_LR  = {'ar': 4e-3, 'va': 1e-3}
@@ -37,10 +37,9 @@ df = load_vreed_df()
 # TRAINING
 # =============================
 def _train_uw(label_type, lr_shared, lr_task, lr_logvar, l2_task, train_data_dict):
-    loader, _, _ = make_combined_mtl_loader(
+    loader, _, _ = make_mtl_loader(
         train_data_dict, WINDOW_SIZE, STRIDE,
-        label_type=label_type, batch_size=BATCH_SIZE,
-        num_tasks=NUM_TASKS, seed=SEED)
+        label_type=label_type, batch_size=BATCH_SIZE, seed=SEED)
 
     model = MTLModelUW(NUM_TASKS).to(device)
     opt   = optim.Adam([

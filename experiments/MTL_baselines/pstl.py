@@ -7,11 +7,11 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
-from data import create_sliding_windows, make_array_loader
+from data import create_sliding_windows, arrays_to_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import SingleTaskModel
-from utils import set_all_seeds, create_kfold_splits
-from training import evaluate_per_participant, aggregate_results, save_all_results
+from utils import set_all_seeds, create_kfold_splits, aggregate_results
+from training import evaluate_per_participant, save_all_results
 
 BATCH_SIZE = PSTL_BATCH_SIZE
 OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_pstl_results')
@@ -44,7 +44,7 @@ def _make_pool_loader(data_df, label_type, shuffle):
     X, y_ar, y_va, _, _ = create_sliding_windows(
         data_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
     y = y_ar if label_type == 'ar' else y_va
-    return make_array_loader(X, y, BATCH_SIZE, shuffle=shuffle, seed=SEED)
+    return arrays_to_loader(X, y, BATCH_SIZE, shuffle=shuffle, seed=SEED)
 
 
 def _train_single(label_type, lr, l2_lambda):

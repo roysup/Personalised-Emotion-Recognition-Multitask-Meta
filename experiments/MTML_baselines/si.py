@@ -9,16 +9,14 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
 import matplotlib.pyplot as plt
 import seaborn as sns
-from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
+from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,, aggregate_mtml_results
                    F1Score, create_kfold_splits, make_kfolds,
                    compute_per_participant_stds, print_determinism_summary,
                    prefix_results)
-from data import create_sliding_windows, make_array_loader
+from data import create_sliding_windows, arrays_to_loader
 from models import SingleTaskModel
 from dataset_configs.vreed import load_vreed_df
-from training import aggregate_mtml_results
-
-hardcoded_splits = HARDCODED_SPLITS
+from training import hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_SI')
 os.makedirs(output_dir, exist_ok=True)
@@ -51,7 +49,7 @@ def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss(reduction='none')
-    loader  = make_array_loader(frames, labels, BATCH_SIZE, shuffle=True, seed=SEED)
+    loader  = arrays_to_loader(frames, labels, BATCH_SIZE, shuffle=True, seed=SEED)
     for epoch in range(epochs):
         model.train()
         run = 0.0
@@ -97,7 +95,7 @@ def hyperparameter_tuning(label_type='AR'):
                 if model is None: fold_f1s.append(0.0); continue
                 model.eval()
                 f1m    = F1Score()
-                loader = make_array_loader(Xva, yva, BATCH_SIZE, shuffle=False)
+                loader = arrays_to_loader(Xva, yva, BATCH_SIZE, shuffle=False)
                 with torch.no_grad():
                     for X_v, y_v in loader:
                         f1m.update_state(y_v.to(device), model(X_v.to(device)))
@@ -125,7 +123,7 @@ def evaluate_per_participant(model, test_participants, test_data, label_type):
         X, _ar, _va, _, _ = create_sliding_windows(p_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
         y = _ar if label_type.upper() == 'AR' else _va
         if len(X) == 0: continue
-        loader = make_array_loader(X, y, BATCH_SIZE, shuffle=False)
+        loader = arrays_to_loader(X, y, BATCH_SIZE, shuffle=False)
         probs, trues = [], []
         with torch.no_grad():
             for X_b, y_b in loader:

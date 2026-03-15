@@ -10,15 +10,15 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
-from data import create_sliding_windows, make_combined_mtl_loader
+from data import create_sliding_windows, make_mtl_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import MTLModel
-from utils import set_all_seeds, compute_metrics_from_cm, create_kfold_splits
-from training import (aggregate_results, save_all_results,
+from utils import set_all_seeds, compute_metrics_from_cm, create_kfold_splits, aggregate_results
+from training import (save_all_results,
                       evaluate_mtl_all, _pcgrad_project)
 
 BATCH_SIZE = MTL_BATCH_SIZE
-NUM_TASKS  = 26
+NUM_TASKS  = len(participant_ids)
 SHARED_LR  = MTL_SHARED_LR
 TASK_LR    = MTL_TASK_LR
 L2_TASK    = MTL_L2_TASK
@@ -82,10 +82,9 @@ def _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids, l2_task):
 # TRAINING
 # =============================
 def _train_pcgrad(label_type, lr_shared, lr_task, l2_task, train_data_dict):
-    loader, _, _ = make_combined_mtl_loader(
+    loader, _, _ = make_mtl_loader(
         train_data_dict, WINDOW_SIZE, STRIDE,
-        label_type=label_type, batch_size=BATCH_SIZE,
-        num_tasks=NUM_TASKS, seed=SEED)
+        label_type=label_type, batch_size=BATCH_SIZE, seed=SEED)
 
     model = MTLModel(NUM_TASKS).to(device)
     opt   = optim.Adam([

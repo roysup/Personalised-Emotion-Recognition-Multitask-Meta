@@ -19,7 +19,6 @@ OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_stl_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-set_all_seeds(SEED)
 print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
 
 # =============================

@@ -23,7 +23,7 @@ from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, roc_auc_
 
 from config import HARDCODED_SPLITS, SEED, MAX_NORM
 from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
-from data import create_sliding_windows, BalancedSamplerMTML
+from data import create_sliding_windows, BalancedSampler
 from dataset_configs.vreed import load_vreed_df
 from models import BaseFeatureExtractor
 from config import RESULTS_DIR
@@ -71,7 +71,7 @@ def make_combined_loader(tasks_dict, user_list, label_type, split='train'):
     tids = np.concatenate(all_tids); vids = np.concatenate(all_vids)
     X_t = torch.tensor(X); y_t = torch.tensor(y).unsqueeze(1)  # (N, window, channels) — model permutes internally
     dataset = TensorDataset(X_t, y_t, torch.tensor(tids), torch.tensor(vids))
-    sampler = BalancedSamplerMTML(tids, list(local_map.keys()), spt, seed=SEED)
+    sampler = BalancedSampler(tids, list(local_map.keys()), spt, seed=SEED)
     loader = DataLoader(dataset, batch_size=len(local_map), sampler=sampler, num_workers=0)
     print(f"[{split}/{label_type}] users={len(local_map)} samples={len(dataset)}")
     return loader, len(dataset), local_map
@@ -130,6 +130,12 @@ class MultiTaskModel(nn.Module):
         return out
 
 
+def compute_l2(model):
+    l2s = L2_SHARED * sum(p.norm(2)**2 for p in model.backbone.parameters() if p.requires_grad)
+    l2t = L2_TASK * (sum(p.norm(2)**2 for m in model.dense1 for p in m.parameters() if p.requires_grad) +
+                     sum(p.norm(2)**2 for m in model.dense2 for p in m.parameters() if p.requires_grad) +
+                     sum(p.norm(2)**2 for m in model.out     for p in m.parameters() if p.requires_grad))
+    return l2s + l2t
 
 
 # =============================
@@ -154,8 +160,7 @@ def train_fold(model, loader, lr, epochs):
         for Xb, yb, tids, _ in loader:
             Xb, yb, tids = Xb.to(device), yb.to(device), tids.to(device)
             opt.zero_grad()
-            loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean() +
-                     L2_SHARED * sum(p.norm(2)**2 for p in model.backbone.parameters() if p.requires_grad) + L2_TASK * sum(p.norm(2)**2 for mm in (*model.dense1, *model.dense2, *model.out) for p in mm.parameters() if p.requires_grad))
+            loss = loss_fn(model(Xb, tids), yb).squeeze(-1).mean() + compute_l2(model)
             if torch.isnan(loss): return None
             loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += loss.item()
@@ -231,8 +236,7 @@ if __name__ == '__main__':
             for Xb, yb, tids, _ in loader:
                 Xb, yb, tids = Xb.to(device), yb.to(device), tids.to(device)
                 opt.zero_grad()
-                loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean() +
-                     L2_SHARED * sum(p.norm(2)**2 for p in model.backbone.parameters() if p.requires_grad) + L2_TASK * sum(p.norm(2)**2 for mm in (*model.dense1, *model.dense2, *model.out) for p in mm.parameters() if p.requires_grad))
+                loss = loss_fn(model(Xb, tids), yb).squeeze(-1).mean() + compute_l2(model)
                 if torch.isnan(loss): raise ValueError(f"NaN epoch {ep}")
                 loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
                 opt.step(); run += loss.item()

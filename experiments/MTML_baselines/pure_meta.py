@@ -6,15 +6,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
-from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
+from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,, aggregate_mtml_results
                    make_kfolds, compute_per_participant_stds,
                    print_determinism_summary, prefix_results)
 from data import build_support_query
 from models import SingleTaskModel
 from dataset_configs.vreed import load_vreed_df
-from training import aggregate_mtml_results
-
-hardcoded_splits = HARDCODED_SPLITS
+from training import hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_PureMeta')
 os.makedirs(output_dir, exist_ok=True)
