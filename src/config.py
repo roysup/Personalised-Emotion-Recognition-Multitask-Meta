@@ -96,6 +96,12 @@ TRANSFER_MTL_LR_PT = 1e-4    # transfer_mtl.py pretrain lr
 TRANSFER_MTL_LR_FT = 5e-5    # transfer_mtl.py finetune lr
 
 # =============================
+# MTML TEST/TRAIN SPLIT
+# =============================
+TEST_PARTICIPANTS  = [105, 109, 112, 125, 131, 132]
+TRAIN_PARTICIPANTS = None  # derived per-script: sorted([p for p in participant_ids if p not in TEST_PARTICIPANTS])
+
+# =============================
 # HARDCODED 10/2 TRAIN/TEST SPLITS
 # =============================
 HARDCODED_SPLITS = {

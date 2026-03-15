@@ -35,7 +35,7 @@ print(f"Device: {device}\nOutput: {output_dir}")
 df = load_vreed_df(mode='mtml')
 
 participant_ids   = sorted([p for p in df['ID'].unique() if p in hardcoded_splits])
-test_participants  = [105,109,112,125,131,132]
+test_participants  = list(TEST_PARTICIPANTS)
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
 

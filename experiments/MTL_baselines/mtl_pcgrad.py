@@ -21,7 +21,6 @@ BATCH_SIZE = MTL_BATCH_SIZE
 NUM_TASKS  = len(participant_ids)
 SHARED_LR  = MTL_SHARED_LR
 TASK_LR    = MTL_TASK_LR
-L2_TASK    = MTL_L2_TASK
 
 OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_pcgrad_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)

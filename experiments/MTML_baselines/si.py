@@ -38,7 +38,7 @@ existing_ids    = set(df['ID'].unique())
 participant_ids = sorted([int(pid) for pid in hardcoded_splits.keys() if pid in existing_ids])
 print(f"Total participants: {len(participant_ids)}")
 
-test_participants  = [105, 109, 112, 125, 131, 132]
+test_participants  = list(TEST_PARTICIPANTS)
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {train_participants}\nTest:  {test_participants}")
 

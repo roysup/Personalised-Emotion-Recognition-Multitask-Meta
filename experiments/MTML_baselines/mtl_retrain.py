@@ -21,7 +21,8 @@ import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, Sampler
 from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, roc_auc_score
 
-from config import HARDCODED_SPLITS, SEED, MAX_NORM, RETRAIN_LR, L2_SHARED, L2_TASK
+from config import (HARDCODED_SPLITS, SEED, MAX_NORM, RETRAIN_LR,
+                    L2_SHARED, L2_TASK, TEST_PARTICIPANTS)
 from config import EPOCHS, WINDOW_SIZE, STRIDE, N_FOLDS, RESULTS_DIR
 from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
 from data import create_sliding_windows, BalancedSampler
@@ -47,7 +48,7 @@ print(f"Device: {device}\nOutput: {output_dir}")
 df = load_vreed_df(mode='mtml')
 
 participant_ids = sorted([p for p in df['ID'].unique() if p in hardcoded_splits])
-test_participants  = [105, 109, 112, 125, 131, 132]
+test_participants  = list(TEST_PARTICIPANTS)
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
 

@@ -20,7 +20,6 @@ NUM_TASKS  = len(participant_ids)
 SHARED_LR   = MTL_SHARED_LR
 TASK_LR     = MTL_TASK_LR
 LOG_VAR_LR  = {'ar': 4e-3, 'va': 1e-3}
-L2_TASK     = MTL_L2_TASK
 
 OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_uw_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
