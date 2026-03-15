@@ -61,19 +61,11 @@ def load_predictions(model_name, model_dir):
     all_ar_true, all_ar_probs = [], []
     all_va_true, all_va_probs = [], []
 
-    if model_name == 'P-STL':
-        for r in results.get('test_results_per_participant_ar', []):
-            all_ar_true.extend(r['y_true'])
-            all_ar_probs.extend(r['y_pred_probs'])
-        for r in results.get('test_results_per_participant_va', []):
-            all_va_true.extend(r['y_true'])
-            all_va_probs.extend(r['y_pred_probs'])
-    else:
-        for task in results.get('per_participant', []):
-            all_ar_true.extend(task['y_true_ar'])
-            all_ar_probs.extend(task['y_pred_probs_ar'])
-            all_va_true.extend(task['y_true_va'])
-            all_va_probs.extend(task['y_pred_probs_va'])
+    for task in results.get('per_participant', []):
+        all_ar_true.extend(task['y_true_ar'])
+        all_ar_probs.extend(task['y_pred_probs_ar'])
+        all_va_true.extend(task['y_true_va'])
+        all_va_probs.extend(task['y_pred_probs_va'])
 
     if all_ar_true:
         preds['ar'] = {'y_true': np.array(all_ar_true), 'y_probs': np.array(all_ar_probs)}
