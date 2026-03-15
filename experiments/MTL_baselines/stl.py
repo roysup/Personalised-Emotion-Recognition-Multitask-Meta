@@ -183,8 +183,8 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
 # MAIN
 # =============================
 if __name__ == '__main__':
-    best_lr_ar, best_l2_ar = hyperparameter_tuning('ar', [3e-4], [1e-5])
-    best_lr_va, best_l2_va = hyperparameter_tuning('va', [3e-4], [1e-5])
+    best_lr_ar, best_l2_ar = hyperparameter_tuning('ar', [MTL_SHARED_LR], [L2_LAMBDA])
+    best_lr_va, best_l2_va = hyperparameter_tuning('va', [MTL_SHARED_LR], [L2_LAMBDA])
 
     models_ar, models_va = {}, {}
 

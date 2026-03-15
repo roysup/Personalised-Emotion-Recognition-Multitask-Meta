@@ -27,7 +27,6 @@ from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfo
 from data import create_sliding_windows, BalancedSampler
 from dataset_configs.vreed import load_vreed_df
 from models import BaseFeatureExtractor
-from config import RESULTS_DIR
 
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
