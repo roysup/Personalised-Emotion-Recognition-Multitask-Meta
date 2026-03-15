@@ -19,11 +19,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, Sampler
-from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, roc_auc_score
+from sklearn.metrics import confusion_matrix, f1_score
 
-from config import (HARDCODED_SPLITS, SEED, MAX_NORM, RETRAIN_LR,
+from config import (HARDCODED_SPLITS, SEED, MAX_NORM, RETRAIN_LR,,
+                    EPOCHS, WINDOW_SIZE, STRIDE, N_FOLDS, RESULTS_DIR)
                     L2_SHARED, L2_TASK, TEST_PARTICIPANTS)
-from config import EPOCHS, WINDOW_SIZE, STRIDE, N_FOLDS, RESULTS_DIR
 from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds, aggregate_mtml_results
 from data import create_sliding_windows, BalancedSampler
 from dataset_configs.vreed import load_vreed_df

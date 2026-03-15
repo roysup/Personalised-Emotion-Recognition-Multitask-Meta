@@ -17,8 +17,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if os.path.join(_REPO_ROOT, 'src') not in sys.path:
     sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 
-from config import HARDCODED_SPLITS
-from config import CSV_PATH, PKL_PATH
+from config import HARDCODED_SPLITS, CSV_PATH, PKL_PATH
 
 # Use the symlink created: ln -s "Phase A/data" data
 # CSV_PATH = os.path.join(_REPO_ROOT, 'data', 'VREED_data_v2.csv')
@@ -70,4 +69,3 @@ def load_vreed_df(preserve_trial_order: bool = False,
 
     df['trial_global'] = df['ID'].astype(str) + '_' + df['Trial'].astype(str)
     return df
-

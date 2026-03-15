@@ -19,7 +19,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from collections import OrderedDict
 from torch.utils.data import TensorDataset, DataLoader, Sampler
-from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
+from sklearn.metrics import confusion_matrix, f1_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -180,7 +180,6 @@ def eval_user(model, local_idx, X, y):
                                       torch.tensor(y).float().unsqueeze(1)),
                         batch_size=FT_BATCH_SIZE, shuffle=False, num_workers=0)
     probs, labels = [], []
-    tids = None
     with torch.no_grad():
         for Xb, yb in loader:
             Xb = Xb.to(device)

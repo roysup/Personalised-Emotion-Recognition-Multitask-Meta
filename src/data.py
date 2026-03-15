@@ -205,8 +205,6 @@ def make_mtl_loader(tasks_dict, window_size, stride,
     all_y        = np.concatenate(all_y,        axis=0)
     all_task_ids = np.concatenate(all_task_ids, axis=0)
     all_trial_ids= np.concatenate(all_trial_ids,axis=0)
-
-    #X_t      = torch.tensor(all_X,         dtype=torch.float32).permute(0, 2, 1)
     X_t = torch.tensor(all_X, dtype=torch.float32)
     y_t      = torch.tensor(all_y,         dtype=torch.float32).unsqueeze(1)
     tids_t   = torch.tensor(all_task_ids,  dtype=torch.long)
