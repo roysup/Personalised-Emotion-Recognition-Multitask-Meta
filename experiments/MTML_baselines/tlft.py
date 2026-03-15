@@ -123,7 +123,7 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
     opt = optim.Adam(model.parameters(), lr=lr)
     sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
-    g = torch.Generator(); g.manual_seed(SEED + pid)
+    g = torch.Generator(); g.manual_seed(SEED)
     loader = DataLoader(TensorDataset(torch.tensor(X.astype('float32')),
                                       torch.tensor(y.astype('float32')).reshape(-1, 1)),
                         batch_size=BATCH_SIZE, shuffle=True, generator=g, num_workers=0)

@@ -158,7 +158,7 @@ def finetune_user(base_model, X, y, lr, pid):
     model = copy.deepcopy(base_model).to(device)
     model = add_new_head(model)
     local_idx = model.num_tasks - 1
-    g = torch.Generator(); g.manual_seed(SEED + pid)
+    g = torch.Generator(); g.manual_seed(SEED)
     loader = DataLoader(TensorDataset(torch.tensor(X).float(),
                                       torch.tensor(y).float().unsqueeze(1)),
                         batch_size=FT_BATCH, shuffle=True, generator=g, num_workers=0)
@@ -212,7 +212,7 @@ def hyperparameter_tuning(label_type='ar'):
             for fold_i in range(N_FOLDS):
                 val_ps = train_folds[fold_i]
                 tr_ps  = [p for j,f in enumerate(train_folds) if j != fold_i for p in f]
-                tr_tasks = {uid: df[df['ID']==uid][df['Trial'].isin(hardcoded_splits[uid]['train'])].reset_index(drop=True) for uid in tr_ps}
+                tr_tasks = {uid: df[(df['ID']==uid) & (df['Trial'].isin(hardcoded_splits[uid]['train'])].reset_index(drop=True) for uid in tr_ps}
                 loader, _, lmap = make_combined_loader(tr_tasks, tr_ps, label_type, 'train')
                 if not lmap: continue
                 try:
@@ -252,7 +252,7 @@ if __name__ == '__main__':
     best_lr_pt_ar, best_lr_ft_ar = hyperparameter_tuning('ar')
     best_lr_pt_va, best_lr_ft_va = hyperparameter_tuning('va')
 
-    tr_tasks = {uid: df[df['ID']==uid][df['Trial'].isin(hardcoded_splits[uid]['train'])].reset_index(drop=True)
+    tr_tasks = {uid: df[(df['ID']==uid) & (df['Trial'].isin(hardcoded_splits[uid]['train'])].reset_index(drop=True)
                 for uid in train_participants}
 
     print('\n' + '='*60 + '\nPRETRAINING FINAL AR MTL\n' + '='*60)

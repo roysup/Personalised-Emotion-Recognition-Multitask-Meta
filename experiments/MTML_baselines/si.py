@@ -13,6 +13,7 @@ os.environ["PYTHONHASHSEED"] = str(42)
 import numpy as np
 import pickle  # still needed for saving results
 import torch
+import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import confusion_matrix, roc_auc_score
