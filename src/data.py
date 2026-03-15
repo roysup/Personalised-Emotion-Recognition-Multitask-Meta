@@ -138,38 +138,24 @@ class BalancedSampler(Sampler):
     Uses a numpy Generator for deterministic, stateful shuffling across epochs.
     """
 
-    def __init__(self, task_ids, num_tasks, samples_per_task, seed=None):
-        self.task_ids        = task_ids
-        self.num_tasks       = num_tasks
-        self.samples_per_task = samples_per_task
-        self.num_batches     = max(samples_per_task.values())
-        self.rng             = np.random.default_rng(seed)
-
-        self.task_indices = {}
-        for t in range(num_tasks):
-            idx = np.where(task_ids == t)[0]
-            if len(idx) == 0:
-                raise ValueError(f"No samples for task {t}")
-            self.task_indices[t] = idx
+    def __init__(self, task_ids, present_task_ids, samples_per_task, seed=None):
+        self.present_tasks = sorted(set(present_task_ids))
+        self.num_tasks     = len(self.present_tasks)
+        self.num_batches   = max(samples_per_task[t] for t in self.present_tasks)
+        self.rng           = np.random.default_rng(seed)
+        self.task_indices  = {t: np.where(task_ids == t)[0] for t in self.present_tasks}
 
     def __iter__(self):
         indices = []
-        for t in range(self.num_tasks):
+        for t in self.present_tasks:
             idx = self.task_indices[t]
             if len(idx) < self.num_batches:
                 sampled = self.rng.choice(idx, size=self.num_batches, replace=True)
             else:
-                sampled = self.rng.permutation(idx)
-                if len(idx) > self.num_batches:
-                    sampled = sampled[:self.num_batches]
-            if len(sampled) < self.num_batches:
-                extra = self.rng.choice(idx,
-                                        size=self.num_batches - len(sampled),
-                                        replace=True)
-                sampled = np.concatenate([sampled, extra])
+                sampled = self.rng.permutation(idx)[:self.num_batches]
             indices.append(sampled)
 
-        indices = np.array(indices).T.flatten()
+        indices     = np.array(indices).T.flatten()
         batch_order = self.rng.permutation(self.num_batches)
 
         shuffled = []
@@ -265,7 +251,7 @@ def make_mtl_loader(tasks_dict, window_size, stride,
     trids_t  = torch.tensor(all_trial_ids, dtype=torch.long)
 
     dataset = TensorDataset(X_t, y_t, tids_t, trids_t)
-    sampler = BalancedSampler(all_task_ids, num_tasks, samples_per_task, seed=seed)
+    sampler = BalancedSampler(all_task_ids, list(samples_per_task.keys()), samples_per_task, seed=seed)
     loader  = DataLoader(dataset, batch_size=batch_size,
                          sampler=sampler, num_workers=0)
     return loader, len(dataset), sampler

@@ -9,14 +9,14 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
 import matplotlib.pyplot as plt
 import seaborn as sns
-from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,, aggregate_mtml_results
-                   create_kfold_splits, make_kfolds,
+from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
+                   aggregate_mtml_results, create_kfold_splits, make_kfolds,
                    compute_per_participant_stds, print_determinism_summary,
                    prefix_results)
 from data import create_sliding_windows, arrays_to_loader
 from models import SingleTaskModel
 from dataset_configs.vreed import load_vreed_df
-from training import hardcoded_splits = HARDCODED_SPLITS
+hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_TF')
 os.makedirs(output_dir, exist_ok=True)
