@@ -22,8 +22,8 @@ BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_ReptileMeta_MT_episode')
 os.makedirs(output_dir, exist_ok=True)
 
-meta_steps_grid  = [50];  meta_lr_grid     = [0.01]
-inner_steps_grid = [10];  inner_lr_grid    = [1e-3]
+meta_steps_grid  = [META_STEPS];  meta_lr_grid     = [META_LR]
+inner_steps_grid = [INNER_STEPS];  inner_lr_grid    = [INNER_LR]
 
 set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

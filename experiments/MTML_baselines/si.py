@@ -22,8 +22,8 @@ output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_SI')
 os.makedirs(output_dir, exist_ok=True)
 
 BATCH_SIZE = SI_BATCH_SIZE
-learning_rates = [3e-4]
-l2_lambdas     = [1e-5]
+learning_rates = [SI_LR]
+l2_lambdas     = [SI_L2]
 
 set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

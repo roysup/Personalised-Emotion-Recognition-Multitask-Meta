@@ -23,7 +23,7 @@ from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from config import HARDCODED_SPLITS, SEED, MAX_NORM
+from config import HARDCODED_SPLITS, SEED, MAX_NORM, TRANSFER_MTL_LR_PT, TRANSFER_MTL_LR_FT
 from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
 from data import create_sliding_windows, BalancedSampler
 from dataset_configs.vreed import load_vreed_df
@@ -37,9 +37,8 @@ output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_TransferMTL')
 model_dir  = os.path.join(output_dir, 'models')
 os.makedirs(output_dir, exist_ok=True); os.makedirs(model_dir, exist_ok=True)
 
-EARLY_STOP     = 999
-learning_rates_pt = [1e-4]
-learning_rates_ft = [5e-5]
+learning_rates_pt = [TRANSFER_MTL_LR_PT]
+learning_rates_ft = [TRANSFER_MTL_LR_FT]
 
 set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

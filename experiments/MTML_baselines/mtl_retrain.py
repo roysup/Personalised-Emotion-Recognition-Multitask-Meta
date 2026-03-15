@@ -21,7 +21,8 @@ import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, Sampler
 from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, roc_auc_score
 
-from config import HARDCODED_SPLITS, SEED, MAX_NORM
+from config import HARDCODED_SPLITS, SEED, MAX_NORM, RETRAIN_LR, L2_SHARED, L2_TASK
+from config import EPOCHS, WINDOW_SIZE, STRIDE, N_FOLDS, RESULTS_DIR
 from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
 from data import create_sliding_windows, BalancedSampler
 from dataset_configs.vreed import load_vreed_df
@@ -35,8 +36,7 @@ model_dir  = os.path.join(output_dir, 'models')
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(model_dir, exist_ok=True)
 
-EARLY_STOP  = 999
-learning_rates = [1e-4]
+learning_rates = [RETRAIN_LR]
 
 set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

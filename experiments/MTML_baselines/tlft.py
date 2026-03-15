@@ -21,12 +21,9 @@ BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_TF')
 os.makedirs(output_dir, exist_ok=True)
 
-BATCH_SIZE      = 32
-EPOCHS_PRETRAIN = EPOCHS
-EPOCHS_FINETUNE = 10
-learning_rates_pre = [1e-3]
-learning_rates_ft  = [1e-3]
-l2_lambdas = [1e-5]
+learning_rates_pre = [TF_LR_PRE]
+learning_rates_ft  = [TF_LR_FT]
+l2_lambdas     = [TF_L2]
 
 set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -66,7 +63,7 @@ def pretrain(X, y, lr, l2_lambda, epochs):
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
-    loader  = arrays_to_loader(X, y, BATCH_SIZE, shuffle=True, seed=SEED)
+    loader  = arrays_to_loader(X, y, FT_BATCH_SIZE, shuffle=True, seed=SEED)
     for ep in range(epochs):
         model.train(); run = 0.0
         for X_b, y_b in loader:
@@ -89,7 +86,7 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
-    loader  = arrays_to_loader(X, y, BATCH_SIZE, shuffle=True, seed=SEED + pid)
+    loader  = arrays_to_loader(X, y, FT_BATCH_SIZE, shuffle=True, seed=SEED + pid)
     for ep in range(epochs):
         model.train(); run = 0.0
         for X_b, y_b in loader:
@@ -108,7 +105,7 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
 
 def eval_model(model, X, y):
     model.eval()
-    loader = arrays_to_loader(X, y, BATCH_SIZE, shuffle=False)
+    loader = arrays_to_loader(X, y, FT_BATCH_SIZE, shuffle=False)
     probs, trues = [], []
     with torch.no_grad():
         for X_b, y_b in loader:
@@ -142,7 +139,7 @@ def hyperparameter_tuning(label_type='AR'):
                     tr_df  = df[df['participant_trial_encoded'].isin(tr_pte)].reset_index(drop=True)
                     Xpre, ypre = _get_windows(tr_df, label_type)
                     if len(Xpre) == 0: continue
-                    base = pretrain(Xpre, ypre, lr_pre, l2, EPOCHS_PRETRAIN)
+                    base = pretrain(Xpre, ypre, lr_pre, l2, EPOCHS)
                     if base is None: continue
                     val_f1s = []
                     for pid in val_ps:
@@ -154,7 +151,7 @@ def hyperparameter_tuning(label_type='AR'):
                         Xft, yft = _get_windows(u_tr, label_type)
                         Xte, yte = _get_windows(u_te, label_type)
                         if len(Xft) == 0 or len(Xte) == 0: continue
-                        ft = finetune(base, Xft, yft, lr_ft, l2, EPOCHS_FINETUNE, pid)
+                        ft = finetune(base, Xft, yft, lr_ft, l2, FT_EPOCHS, pid)
                         if ft is None: continue
                         r = eval_model(ft, Xte, yte)
                         val_f1s.append(f1_score(r['y_true'], r['y_pred'],
@@ -188,13 +185,13 @@ if __name__ == '__main__':
     print('\n' + '='*60 + '\nPRETRAINING AR\n' + '='*60)
     Xpre_ar, ypre_ar = _get_windows(pretrain_df, 'AR')
     set_all_seeds(SEED)
-    base_ar = pretrain(Xpre_ar, ypre_ar, best_lr_pre_ar, best_l2_ar, EPOCHS_PRETRAIN)
+    base_ar = pretrain(Xpre_ar, ypre_ar, best_lr_pre_ar, best_l2_ar, EPOCHS)
     torch.save(base_ar.state_dict(), os.path.join(output_dir, 'base_model_ar_final.pth'))
 
     print('\n' + '='*60 + '\nPRETRAINING VA\n' + '='*60)
     Xpre_va, ypre_va = _get_windows(pretrain_df, 'VA')
     set_all_seeds(SEED)
-    base_va = pretrain(Xpre_va, ypre_va, best_lr_pre_va, best_l2_va, EPOCHS_PRETRAIN)
+    base_va = pretrain(Xpre_va, ypre_va, best_lr_pre_va, best_l2_va, EPOCHS)
     torch.save(base_va.state_dict(), os.path.join(output_dir, 'base_model_va_final.pth'))
 
     results_ar, results_va = [], []
@@ -211,8 +208,8 @@ if __name__ == '__main__':
         Xte_va, yte_va = _get_windows(u_te, 'VA')
 
         print(f"\nParticipant {pid}: fine-tuning")
-        ft_ar = finetune(base_ar, Xft_ar, yft_ar, best_lr_ft_ar, best_l2_ar, EPOCHS_FINETUNE, pid)
-        ft_va = finetune(base_va, Xft_va, yft_va, best_lr_ft_va, best_l2_va, EPOCHS_FINETUNE, pid)
+        ft_ar = finetune(base_ar, Xft_ar, yft_ar, best_lr_ft_ar, best_l2_ar, FT_EPOCHS, pid)
+        ft_va = finetune(base_va, Xft_va, yft_va, best_lr_ft_va, best_l2_va, FT_EPOCHS, pid)
 
         r_ar = eval_model(ft_ar, Xte_ar, yte_ar); r_ar['participant_id'] = pid
         r_va = eval_model(ft_va, Xte_va, yte_va); r_va['participant_id'] = pid

@@ -84,6 +84,18 @@ EPISODE_SIZE = 5
 L2_LAMBDA    = 1e-5
 
 # =============================
+# SCRIPT-SPECIFIC LR DEFAULTS
+# =============================
+SI_LR              = 3e-4    # si.py pretrain lr (= MTL_SHARED_LR)
+SI_L2              = 1e-5    # si.py l2 (= L2_LAMBDA)
+RETRAIN_LR         = 1e-4    # mtl_retrain.py
+TF_LR_PRE          = 1e-3    # tlft.py pretrain lr
+TF_LR_FT           = 1e-3    # tlft.py finetune lr
+TF_L2              = 1e-5    # tlft.py l2 (= L2_LAMBDA)
+TRANSFER_MTL_LR_PT = 1e-4    # transfer_mtl.py pretrain lr
+TRANSFER_MTL_LR_FT = 5e-5    # transfer_mtl.py finetune lr
+
+# =============================
 # HARDCODED 10/2 TRAIN/TEST SPLITS
 # =============================
 HARDCODED_SPLITS = {
