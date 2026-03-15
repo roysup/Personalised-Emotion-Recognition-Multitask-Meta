@@ -3,32 +3,19 @@ Single-Task Learning (STL) — per-participant
 One AR model and one VA model trained independently per participant.
 Seed is reset before the full AR pass and again before the full VA pass.
 """
-import os
-import sys
+import os, sys
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-os.environ["PYTHONHASHSEED"] = str(42)
-
-import numpy as np
-import pickle
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
-from sklearn.metrics import confusion_matrix
-
-from config import SEED, WINDOW_SIZE, STRIDE, N_FOLDS, MAX_NORM, EPOCHS, HARDCODED_SPLITS
-from data import create_sliding_windows
+from config import *
+from data import create_sliding_windows, make_array_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import SingleTaskModel
-from utils import (set_all_seeds, compute_metrics_from_cm, create_kfold_splits)
+from utils import set_all_seeds, compute_metrics_from_cm, create_kfold_splits
 from training import aggregate_results, save_all_results
-from paths import RESULTS_DIR
-BASE_OUTPUT_DIR = RESULTS_DIR
-BATCH_SIZE = 8
-OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_stl_results')
+
+BATCH_SIZE = STL_BATCH_SIZE
+OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_stl_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -42,27 +29,19 @@ df = load_vreed_df()
 # =============================
 # HELPERS
 # =============================
-def _make_loader(X, y, shuffle):
-    X_t = torch.tensor(X, dtype=torch.float32)
-    y_t = torch.tensor(y, dtype=torch.float32).reshape(-1, 1)
-    ds  = TensorDataset(X_t, y_t)
-    g   = torch.Generator(); g.manual_seed(SEED)
-    return DataLoader(ds, batch_size=BATCH_SIZE, shuffle=shuffle,
-                      num_workers=0, generator=g if shuffle else None)
-
 def _train_participant(task_idx, label_type, lr, l2_lambda, train_videos, participant_data):
     train_df = participant_data[participant_data['Trial'].isin(train_videos)].reset_index(drop=True)
     if len(train_df) == 0:
         return None
-
     X, y_ar, y_va, _, _ = create_sliding_windows(train_df, WINDOW_SIZE, STRIDE, task_id=task_idx)
     if len(X) == 0:
         return None
 
-    loader  = _make_loader(X, y_ar if label_type == 'ar' else y_va, shuffle=True)
-    model   = SingleTaskModel().to(device)
-    opt     = optim.Adam(model.parameters(), lr=lr)
-    sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.1, patience=3)
+    y      = y_ar if label_type == 'ar' else y_va
+    loader = make_array_loader(X, y, BATCH_SIZE, shuffle=True, seed=SEED)
+    model  = SingleTaskModel().to(device)
+    opt    = optim.Adam(model.parameters(), lr=lr)
+    sched  = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.1, patience=3)
     loss_fn = nn.BCEWithLogitsLoss(reduction='none')
 
     for epoch in range(EPOCHS):
@@ -81,14 +60,13 @@ def _train_participant(task_idx, label_type, lr, l2_lambda, train_videos, partic
             opt.step()
             running += total.item()
         sched.step(running / len(loader))
-
     return model
+
 
 def _evaluate_participant(model_ar, model_va, task_idx, test_videos, participant_data):
     test_df = participant_data[participant_data['Trial'].isin(test_videos)].reset_index(drop=True)
     if len(test_df) == 0:
         return None
-
     X, y_ar, y_va, _, _ = create_sliding_windows(test_df, WINDOW_SIZE, STRIDE, task_id=task_idx)
     if len(X) == 0:
         return None
@@ -148,16 +126,16 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
                     if len(X_tr) == 0 or len(X_va) == 0:
                         continue
 
-                    y_tr       = y_ar_tr if label_type == 'ar' else y_va_tr
-                    y_va_lbl   = y_ar_va if label_type == 'ar' else y_va_va
+                    y_tr     = y_ar_tr if label_type == 'ar' else y_va_tr
+                    y_va_lbl = y_ar_va if label_type == 'ar' else y_va_va
 
                     set_all_seeds(SEED)
                     model   = SingleTaskModel().to(device)
                     opt     = optim.Adam(model.parameters(), lr=lr)
                     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
                     lfn     = nn.BCEWithLogitsLoss(reduction='none')
-                    ldr_tr  = _make_loader(X_tr, y_tr, shuffle=True)
-                    ldr_va  = _make_loader(X_va, y_va_lbl, shuffle=False)
+                    ldr_tr  = make_array_loader(X_tr, y_tr,     BATCH_SIZE, shuffle=True,  seed=SEED)
+                    ldr_va  = make_array_loader(X_va, y_va_lbl, BATCH_SIZE, shuffle=False)
 
                     best_f1 = 0.0
                     for _ in range(EPOCHS):

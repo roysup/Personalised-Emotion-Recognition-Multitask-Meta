@@ -2,41 +2,30 @@
 Subject-Independent (SI) Baseline
 Train on 20 participants, evaluate on 6 held-out test participants.
 """
-import os
-import sys
+import os, sys
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-os.environ["PYTHONHASHSEED"] = str(42)
-
-import numpy as np
-import pickle  # still needed for saving results
-import torch
-import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
-import torch.nn as nn
-from sklearn.metrics import confusion_matrix, roc_auc_score
+from config import *
 import matplotlib.pyplot as plt
 import seaborn as sns
-import pandas as pd
-
-from config import HARDCODED_SPLITS, SEED, WINDOW_SIZE, STRIDE, MAX_NORM, EPOCHS
-from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, F1Score, create_kfold_splits, make_kfolds
-from data import create_sliding_windows
+from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
+                   F1Score, create_kfold_splits, make_kfolds,
+                   compute_per_participant_stds, print_determinism_summary,
+                   prefix_results)
+from data import create_sliding_windows, make_array_loader
 from models import SingleTaskModel
 from dataset_configs.vreed import load_vreed_df
-from paths import RESULTS_DIR
+from training import aggregate_mtml_results
 
 hardcoded_splits = HARDCODED_SPLITS
-BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
-output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_SI')
+BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
+output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_SI')
 os.makedirs(output_dir, exist_ok=True)
 
-BATCH_SIZE = 32
-N_FOLDS = 5
+BATCH_SIZE = SI_BATCH_SIZE
 learning_rates = [3e-4]
-l2_lambdas = [1e-5]
+l2_lambdas     = [1e-5]
 
 set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -46,10 +35,8 @@ print(f"Device: {device}\nOutput: {output_dir}")
 # DATA
 # =============================
 df = load_vreed_df(preserve_trial_order=True)
-# trial_global (added by load_vreed_df) gives unique per-participant trial keys
-# equivalent to the old participant_trial_encoded / ID_video column
 
-existing_ids = set(df['ID'].unique())
+existing_ids    = set(df['ID'].unique())
 participant_ids = sorted([int(pid) for pid in hardcoded_splits.keys() if pid in existing_ids])
 print(f"Total participants: {len(participant_ids)}")
 
@@ -58,31 +45,21 @@ train_participants = sorted([p for p in participant_ids if p not in test_partici
 print(f"Train: {train_participants}\nTest:  {test_participants}")
 
 
-
-def make_loader(X, y, shuffle):
-    X_t = torch.tensor(X.astype('float32'))
-    y_t = torch.tensor(y.astype('float32')).reshape(-1, 1)
-    g = torch.Generator(); g.manual_seed(SEED)
-    return DataLoader(TensorDataset(X_t, y_t), batch_size=BATCH_SIZE,
-                      shuffle=shuffle, num_workers=0,
-                      generator=g if shuffle else None)
-
-
 def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
     set_all_seeds(SEED)
-    model = SingleTaskModel().to(device)
-    opt = optim.Adam(model.parameters(), lr=lr)
-    sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
+    model   = SingleTaskModel().to(device)
+    opt     = optim.Adam(model.parameters(), lr=lr)
+    sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss(reduction='none')
-    loader = make_loader(frames, labels, shuffle=True)
+    loader  = make_array_loader(frames, labels, BATCH_SIZE, shuffle=True, seed=SEED)
     for epoch in range(epochs):
         model.train()
         run = 0.0
         for X_b, y_b in loader:
             X_b, y_b = X_b.to(device), y_b.to(device)
             opt.zero_grad()
-            loss = loss_fn(model(X_b), y_b).mean()
-            l2 = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
+            loss  = loss_fn(model(X_b), y_b).mean()
+            l2    = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
             total = loss + l2
             if torch.isnan(total): return None
             total.backward()
@@ -95,20 +72,10 @@ def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
 # =============================
 # HYPERPARAMETER TUNING
 # =============================
-def create_participant_kfolds(participants, k=5):
-    rng = np.random.default_rng(SEED)
-    perm = rng.permutation(participants)
-    folds, start = [], 0
-    for i in range(k):
-        size = len(perm) // k + (1 if i < len(perm) % k else 0)
-        folds.append(list(perm[start:start + size])); start += size
-    return folds
-
-
 def hyperparameter_tuning(label_type='AR'):
     print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type}] SI\n{'='*60}")
-    results = []
-    train_folds = create_participant_kfolds(train_participants)
+    results      = []
+    train_folds  = make_kfolds(train_participants, seed=SEED)   # replaces local create_participant_kfolds
     for lr in learning_rates:
         for l2 in l2_lambdas:
             fold_f1s = []
@@ -129,8 +96,8 @@ def hyperparameter_tuning(label_type='AR'):
                 model = train_model(Xtr, ytr, lr, l2)
                 if model is None: fold_f1s.append(0.0); continue
                 model.eval()
-                f1m = F1Score()
-                loader = make_loader(Xva, yva, shuffle=False)
+                f1m    = F1Score()
+                loader = make_array_loader(Xva, yva, BATCH_SIZE, shuffle=False)
                 with torch.no_grad():
                     for X_v, y_v in loader:
                         f1m.update_state(y_v.to(device), model(X_v.to(device)))
@@ -158,7 +125,7 @@ def evaluate_per_participant(model, test_participants, test_data, label_type):
         X, _ar, _va, _, _ = create_sliding_windows(p_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
         y = _ar if label_type.upper() == 'AR' else _va
         if len(X) == 0: continue
-        loader = make_loader(X, y, shuffle=False)
+        loader = make_array_loader(X, y, BATCH_SIZE, shuffle=False)
         probs, trues = [], []
         with torch.no_grad():
             for X_b, y_b in loader:
@@ -167,7 +134,7 @@ def evaluate_per_participant(model, test_participants, test_data, label_type):
         y_true = np.array(trues).astype(int)
         y_prob = np.array(probs)
         y_pred = (y_prob > 0.5).astype(int)
-        cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+        cm     = confusion_matrix(y_true, y_pred, labels=[0, 1])
         acc, prec, rec, f1 = compute_metrics_from_cm(cm)
         results.append({'participant_id': pid, 'y_true': y_true, 'y_pred': y_pred,
                         'y_pred_probs': y_prob, 'cm': cm,
@@ -183,68 +150,41 @@ if __name__ == '__main__':
     best_lr_ar, best_l2_ar = hyperparameter_tuning('AR')
     best_lr_va, best_l2_va = hyperparameter_tuning('VA')
 
-    # Build train/test datasets
-    train_pte = [f"{p}_{v}" for p in train_participants if p in hardcoded_splits
-                 for v in hardcoded_splits[p]['train']]
-    test_pte  = [f"{p}_{v}" for p in test_participants if p in hardcoded_splits
-                 for v in hardcoded_splits[p]['test']]
+    train_pte  = [f"{p}_{v}" for p in train_participants if p in hardcoded_splits
+                  for v in hardcoded_splits[p]['train']]
+    test_pte   = [f"{p}_{v}" for p in test_participants if p in hardcoded_splits
+                  for v in hardcoded_splits[p]['test']]
     train_data = df[df['trial_global'].isin(train_pte)].reset_index(drop=True)
     test_data  = df[df['trial_global'].isin(test_pte)].reset_index(drop=True)
 
-    # Train AR
     print('\n' + '='*60 + '\nTRAINING AR\n' + '='*60)
     Xtr_ar, ytr_ar, _, _, _ = create_sliding_windows(train_data, WINDOW_SIZE, STRIDE, trial_col='trial_global')
     set_all_seeds(SEED)
     model_ar = train_model(Xtr_ar, ytr_ar, best_lr_ar, best_l2_ar)
     torch.save(model_ar.state_dict(), os.path.join(output_dir, 'model_ar_si.pth'))
 
-    # Train VA
     print('\n' + '='*60 + '\nTRAINING VA\n' + '='*60)
     Xtr_va, _, ytr_va, _, _ = create_sliding_windows(train_data, WINDOW_SIZE, STRIDE, trial_col='trial_global')
     set_all_seeds(SEED)
     model_va = train_model(Xtr_va, ytr_va, best_lr_va, best_l2_va)
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'model_va_si.pth'))
 
-    # Evaluate
     print('\n' + '='*60 + '\nEVALUATION AR\n' + '='*60)
     results_ar = evaluate_per_participant(model_ar, test_participants, test_data, 'AR')
     print('\n' + '='*60 + '\nEVALUATION VA\n' + '='*60)
     results_va = evaluate_per_participant(model_va, test_participants, test_data, 'VA')
 
-    # Aggregate
-    def aggregate(results, label):
-        all_true  = np.concatenate([r['y_true'] for r in results])
-        all_pred  = np.concatenate([r['y_pred'] for r in results])
-        all_probs = np.concatenate([r['y_pred_probs'] for r in results])
-        cm = confusion_matrix(all_true, all_pred, labels=[0, 1])
-        acc, prec, rec, f1 = compute_metrics_from_cm(cm)
-        auc_val, fpr, tpr = safe_roc_auc(all_true, all_probs)
-        metric_lists = {k: [r[k] for r in results] for k in ['accuracy','precision','recall','f1']}
-        auc_list = []
-        for r in results:
-            try: auc_list.append(roc_auc_score(r['y_true'], r['y_pred_probs']))
-            except: auc_list.append(np.nan)
-        stds = {k: np.std(v, ddof=1) for k, v in metric_lists.items()}
-        stds['auc'] = np.std([x for x in auc_list if not np.isnan(x)], ddof=1)
-        print(f"\n{label} Metrics:")
-        print(f"  AUC={auc_val:.4f}±{stds['auc']:.4f}  Acc={acc:.4f}±{stds['accuracy']:.4f}  "
-              f"F1={f1:.4f}±{stds['f1']:.4f}")
-        return all_true, all_pred, all_probs, cm, acc, prec, rec, f1, auc_val, fpr, tpr, stds
+    agg = aggregate_mtml_results(results_ar, results_va)
 
-    from sklearn.metrics import roc_auc_score
-    all_true_ar, all_pred_ar, all_probs_ar, cm_AR, ar_acc, ar_prec, ar_rec, ar_f1, ar_auc, ar_fpr, ar_tpr, ar_stds = aggregate(results_ar, 'AR')
-    all_true_va, all_pred_va, all_probs_va, cm_VA, va_acc, va_prec, va_rec, va_f1, va_auc, va_fpr, va_tpr, va_stds = aggregate(results_va, 'VA')
-
-    # Save ROC data
     roc_data = {
-        'AR': {'true': all_true_ar, 'probs': all_probs_ar},
-        'VA': {'true': all_true_va, 'probs': all_probs_va},
+        'AR': {'true': agg['all_true_ar'], 'probs': agg['all_probs_ar']},
+        'VA': {'true': agg['all_true_va'], 'probs': agg['all_probs_va']},
     }
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
         pickle.dump(roc_data, f)
 
-    # Confusion matrix plots
-    for cm, label, fname in [(cm_AR, 'AR', 'ar_cm_si.png'), (cm_VA, 'VA', 'va_cm_si.png')]:
+    for cm, label, fname in [(agg['cm_ar'], 'AR', 'ar_cm_si.png'),
+                              (agg['cm_va'], 'VA', 'va_cm_si.png')]:
         plt.figure(figsize=(6, 5))
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                     xticklabels=[f'{label}=0', f'{label}=1'],
@@ -253,40 +193,28 @@ if __name__ == '__main__':
         plt.xlabel('Predicted'); plt.ylabel('True')
         plt.savefig(os.path.join(output_dir, fname)); plt.close()
 
-    # Save results
+    ar_stds = compute_per_participant_stds(prefix_results(results_ar, 'ar'), 'ar')
+    va_stds = compute_per_participant_stds(prefix_results(results_va, 'va'), 'va')
+
     final_results = {
-        'train_participants': train_participants, 'test_participants': test_participants,
+        'train_participants': train_participants,
+        'test_participants':  test_participants,
         'best_hyperparameters': {'AR': {'lr': best_lr_ar, 'l2': best_l2_ar},
-                                  'VA': {'lr': best_lr_va, 'l2': best_l2_va}},
-        'ar_acc': ar_acc, 'ar_precision': ar_prec, 'ar_recall': ar_rec,
-        'ar_f1': ar_f1,   'ar_auc': ar_auc,
-        'va_acc': va_acc, 'va_precision': va_prec, 'va_recall': va_rec,
-        'va_f1': va_f1,   'va_auc': va_auc,
+                                 'VA': {'lr': best_lr_va, 'l2': best_l2_va}},
+        **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
+        **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
         **{f'ar_{k}_std': v for k, v in ar_stds.items()},
         **{f'va_{k}_std': v for k, v in va_stds.items()},
         'test_results_per_participant_ar': results_ar,
         'test_results_per_participant_va': results_va,
-        'cm_ar': cm_AR, 'cm_va': cm_VA,
+        'cm_ar': agg['cm_ar'], 'cm_va': agg['cm_va'],
     }
     with open(os.path.join(output_dir, 'si_results.pkl'), 'wb') as f:
         pickle.dump(final_results, f)
 
-    # =============================
-    # DETERMINISM SUMMARY
-    # =============================
-    from utils import compute_per_participant_stds, print_determinism_summary
-
-    def _prefix(results, prefix):
-        return [{f"{prefix}_acc": r["accuracy"], f"{prefix}_precision": r["precision"],
-                 f"{prefix}_recall": r["recall"], f"{prefix}_f1": r["f1"],
-                 f"y_true_{prefix}": r["y_true"], f"y_pred_probs_{prefix}": r["y_pred_probs"]}
-                for r in results]
-
-    ar_stds = compute_per_participant_stds(_prefix(results_ar, "ar"), "ar")
-    va_stds = compute_per_participant_stds(_prefix(results_va, "va"), "va")
     print_determinism_summary(
-        {f"ar_{k}": final_results[f"ar_{k}"] for k in ["auc", "acc", "precision", "recall", "f1"]},
-        {f"va_{k}": final_results[f"va_{k}"] for k in ["auc", "acc", "precision", "recall", "f1"]},
+        {f'ar_{k}': final_results[f'ar_{k}'] for k in ['auc','acc','precision','recall','f1']},
+        {f'va_{k}': final_results[f'va_{k}'] for k in ['auc','acc','precision','recall','f1']},
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")

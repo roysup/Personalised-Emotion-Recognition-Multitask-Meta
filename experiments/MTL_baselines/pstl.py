@@ -2,33 +2,19 @@
 Population Single-Task Learning (P-STL)
 One model trained on all participants pooled together, separately for AR and VA.
 """
-import os
-import sys
+import os, sys
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))       # for config, data, models, utils, training
-sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))  # for dataset_configs.vreed
-
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-os.environ["PYTHONHASHSEED"] = str(42)
-
-import numpy as np
-import pickle
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
-
-from config import SEED, WINDOW_SIZE, STRIDE, N_FOLDS, MAX_NORM, EPOCHS, HARDCODED_SPLITS
-from data import create_sliding_windows
-from dataset_configs.vreed import load_vreed_df, participant_ids 
-from models import SingleTaskModel 
-from utils import (set_all_seeds, create_kfold_splits) 
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
+from config import *
+from data import create_sliding_windows, make_array_loader
+from dataset_configs.vreed import load_vreed_df, participant_ids
+from models import SingleTaskModel
+from utils import set_all_seeds, create_kfold_splits
 from training import evaluate_per_participant, aggregate_results, save_all_results
-from paths import RESULTS_DIR
-BASE_OUTPUT_DIR = RESULTS_DIR
 
-BATCH_SIZE = 32
-OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_pstl_results')
+BATCH_SIZE = PSTL_BATCH_SIZE
+OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_pstl_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -53,15 +39,13 @@ test_df  = df[df['participant_trial_encoded'].isin(_test_set)].reset_index(drop=
 # =============================
 # HELPERS
 # =============================
-def _make_loader(data_df, label_type, shuffle):
-    X, y_ar, y_va, _, _ = create_sliding_windows(data_df, WINDOW_SIZE, STRIDE,
-                                                   trial_col='trial_global')
-    X = X.astype('float32')
-    y = (y_ar if label_type == 'ar' else y_va).astype('float32').reshape(-1, 1)
-    ds = TensorDataset(torch.tensor(X), torch.tensor(y))
-    g  = torch.Generator(); g.manual_seed(SEED)
-    return DataLoader(ds, batch_size=BATCH_SIZE, shuffle=shuffle,
-                      num_workers=0, generator=g if shuffle else None)
+def _make_pool_loader(data_df, label_type, shuffle):
+    """Windowed loader over the full pooled DataFrame (used by PSTL train)."""
+    X, y_ar, y_va, _, _ = create_sliding_windows(
+        data_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
+    y = y_ar if label_type == 'ar' else y_va
+    return make_array_loader(X, y, BATCH_SIZE, shuffle=shuffle, seed=SEED)
+
 
 def _train_single(label_type, lr, l2_lambda):
     set_all_seeds(SEED)
@@ -70,12 +54,12 @@ def _train_single(label_type, lr, l2_lambda):
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.1, patience=3)
     loss_fn = nn.BCEWithLogitsLoss(reduction='none')
 
-    train_loader = _make_loader(train_df, label_type, shuffle=True)
+    loader = _make_pool_loader(train_df, label_type, shuffle=True)
 
     for epoch in range(EPOCHS):
         model.train()
         running = 0.0
-        for X_b, y_b in train_loader:
+        for X_b, y_b in loader:
             X_b, y_b = X_b.to(device), y_b.to(device)
             opt.zero_grad()
             loss  = loss_fn(model(X_b), y_b).mean()
@@ -88,11 +72,10 @@ def _train_single(label_type, lr, l2_lambda):
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step()
             running += total.item()
-        sched.step(running / len(train_loader))
+        sched.step(running / len(loader))
         if (epoch + 1) % 5 == 0 or epoch == 0:
             print(f"  [{label_type.upper()}] Epoch {epoch+1}/{EPOCHS}  "
-                  f"loss={running/len(train_loader):.4f}")
-
+                  f"loss={running/len(loader):.4f}")
     return model
 
 # =============================
@@ -124,8 +107,8 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
                 sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
                 loss_fn = nn.BCEWithLogitsLoss(reduction='none')
 
-                tr_loader = _make_loader(tr_fold, label_type, shuffle=True)
-                va_loader = _make_loader(va_fold, label_type, shuffle=False)
+                tr_loader = _make_pool_loader(tr_fold, label_type, shuffle=True)
+                va_loader = _make_pool_loader(va_fold, label_type, shuffle=False)
 
                 best_f1 = 0.0
                 for _ in range(EPOCHS):
@@ -172,8 +155,8 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
 # MAIN
 # =============================
 if __name__ == '__main__':
-    best_lr_ar, best_l2_ar = hyperparameter_tuning('ar', [3e-4], [1e-5]) # CHECK
-    best_lr_va, best_l2_va = hyperparameter_tuning('va', [3e-4], [1e-5]) # CHECK
+    best_lr_ar, best_l2_ar = hyperparameter_tuning('ar', [3e-4], [1e-5])
+    best_lr_va, best_l2_va = hyperparameter_tuning('va', [3e-4], [1e-5])
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
@@ -181,25 +164,26 @@ if __name__ == '__main__':
     torch.save(model_ar.state_dict(), os.path.join(OUTPUT_DIR, 'model_ar.pth'))
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
-    
     set_all_seeds(SEED)
     model_va = _train_single('va', best_lr_va, best_l2_va)
     torch.save(model_va.state_dict(), os.path.join(OUTPUT_DIR, 'model_va.pth'))
 
+    # Build per-participant test loaders for evaluate_per_participant
     test_loaders_ar, test_loaders_va = {}, {}
     for task_idx, pid in enumerate(participant_ids):
         test_trials = [f"{pid}_{v}" for v in HARDCODED_SPLITS[pid]['test']]
         p_test = test_df[test_df['trial_global'].isin(test_trials)].reset_index(drop=True)
-        if len(p_test):
-            X_test, y_ar_test, y_va_test, _, _ = create_sliding_windows(
-                p_test, WINDOW_SIZE, STRIDE)  # Trial is unique within one participant
-            X_t = torch.tensor(X_test, dtype=torch.float32)
-            test_loaders_ar[task_idx] = DataLoader(
-                TensorDataset(X_t, torch.tensor(y_ar_test, dtype=torch.float32).reshape(-1, 1)),
-                batch_size=BATCH_SIZE, shuffle=False)
-            test_loaders_va[task_idx] = DataLoader(
-                TensorDataset(X_t, torch.tensor(y_va_test, dtype=torch.float32).reshape(-1, 1)),
-                batch_size=BATCH_SIZE, shuffle=False)
+        if len(p_test) == 0:
+            continue
+        X_test, y_ar_test, y_va_test, _, _ = create_sliding_windows(
+            p_test, WINDOW_SIZE, STRIDE)
+        X_t = torch.tensor(X_test, dtype=torch.float32)
+        test_loaders_ar[task_idx] = DataLoader(
+            TensorDataset(X_t, torch.tensor(y_ar_test, dtype=torch.float32).reshape(-1, 1)),
+            batch_size=BATCH_SIZE, shuffle=False)
+        test_loaders_va[task_idx] = DataLoader(
+            TensorDataset(X_t, torch.tensor(y_va_test, dtype=torch.float32).reshape(-1, 1)),
+            batch_size=BATCH_SIZE, shuffle=False)
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = evaluate_per_participant(

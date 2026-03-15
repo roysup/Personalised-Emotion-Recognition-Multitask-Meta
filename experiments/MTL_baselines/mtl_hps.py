@@ -4,38 +4,25 @@ Shared CNN+LSTM backbone, task-specific dense heads per participant.
 Separate AR and VA models trained sequentially.
 Seed is reset before AR training and again before VA training.
 """
-import os
-import sys
+import os, sys
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-os.environ["PYTHONHASHSEED"] = str(42)
-
-import numpy as np
-import pickle
-import torch
-import torch.nn as nn
-import torch.optim as optim
-
-from config import SEED, WINDOW_SIZE, STRIDE, N_FOLDS, MAX_NORM, EPOCHS, HARDCODED_SPLITS
+from config import *
 from data import create_sliding_windows, make_combined_mtl_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import MTLModel
-from utils import (set_all_seeds, compute_metrics_from_cm, create_kfold_splits)
-from training import aggregate_results, save_all_results
-from paths import RESULTS_DIR
-BASE_OUTPUT_DIR = RESULTS_DIR
+from utils import set_all_seeds, compute_metrics_from_cm, create_kfold_splits
+from training import aggregate_results, save_all_results, evaluate_mtl_all
 
-BATCH_SIZE = 26
+BATCH_SIZE = MTL_BATCH_SIZE
 NUM_TASKS  = 26
-SHARED_LR  = 3e-4
-TASK_LR    = 1e-4
-L2_TASK    = 1e-5
+SHARED_LR  = MTL_SHARED_LR
+TASK_LR    = MTL_TASK_LR
+L2_TASK    = MTL_L2_TASK
 L2_SHARED  = 0.0
 
-#BASE_OUTPUT_DIR = '/content/drive/MyDrive/Phase A/results/VREED'
-OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_hps_results')
+OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -94,46 +81,6 @@ def _train_mtl(label_type, lr_shared, lr_task, l2_fn, train_data_dict):
 
     model.load_state_dict(torch.load(ckpt_path))
     return model
-
-def _evaluate_all(model_ar, model_va, test_data_dict):
-    from sklearn.metrics import confusion_matrix
-    results = []
-    for task_idx, pid in enumerate(participant_ids):
-        test_df = test_data_dict.get(task_idx)
-        if test_df is None or len(test_df) == 0:
-            continue
-        X, y_ar, y_va, _, _ = create_sliding_windows(
-            test_df, WINDOW_SIZE, STRIDE, task_id=task_idx)
-        if len(X) == 0:
-            continue
-        X_t    = torch.tensor(X, dtype=torch.float32).to(device)
-        tids_t = torch.full((len(X),), task_idx, dtype=torch.long).to(device)
-
-        model_ar.eval(); model_va.eval()
-        with torch.no_grad():
-            prob_ar = torch.sigmoid(model_ar(X_t, tids_t)).cpu().numpy().flatten()
-            prob_va = torch.sigmoid(model_va(X_t, tids_t)).cpu().numpy().flatten()
-
-        pred_ar = (prob_ar > 0.5).astype(int); y_ar_i = y_ar.astype(int)
-        pred_va = (prob_va > 0.5).astype(int); y_va_i = y_va.astype(int)
-
-        cm_ar = confusion_matrix(y_ar_i, pred_ar, labels=[0, 1])
-        cm_va = confusion_matrix(y_va_i, pred_va, labels=[0, 1])
-        ar_acc, ar_prec, ar_rec, ar_f1 = compute_metrics_from_cm(cm_ar)
-        va_acc, va_prec, va_rec, va_f1 = compute_metrics_from_cm(cm_va)
-
-        print(f"  Participant {pid}: AR acc={ar_acc:.4f} f1={ar_f1:.4f} | "
-              f"VA acc={va_acc:.4f} f1={va_f1:.4f}")
-
-        results.append({
-            'task_idx': task_idx, 'participant_id': pid,
-            'cm_ar': cm_ar, 'cm_va': cm_va,
-            'ar_acc': ar_acc, 'ar_precision': ar_prec, 'ar_recall': ar_rec, 'ar_f1': ar_f1,
-            'va_acc': va_acc, 'va_precision': va_prec, 'va_recall': va_rec, 'va_f1': va_f1,
-            'y_true_ar': y_ar_i, 'y_pred_ar': pred_ar, 'y_pred_probs_ar': prob_ar,
-            'y_true_va': y_va_i, 'y_pred_va': pred_va, 'y_pred_probs_va': prob_va,
-        })
-    return results
 
 # =============================
 # HYPERPARAMETER TUNING
@@ -241,7 +188,8 @@ if __name__ == '__main__':
     model_va = _train_mtl('va', best_sh_va, best_tk_va, _l2_task_only, train_data)
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
-    results = _evaluate_all(model_ar, model_va, test_data)
+    results = evaluate_mtl_all(model_ar, model_va, test_data,
+                               participant_ids, device, WINDOW_SIZE, STRIDE)
     agg     = aggregate_results(results)
 
     results_df, ar_stds, va_stds = save_all_results(

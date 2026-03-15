@@ -1,39 +1,24 @@
 """
 Pure Meta-Learning — Reptile with single-task episodes, single shared model (no task heads).
 """
-import os
-import sys
+import os, sys
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-os.environ["PYTHONHASHSEED"] = str(42)
-
-import gc, copy
-import numpy as np
-import pickle
-import pandas as pd
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import TensorDataset, DataLoader
-from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
-
-from config import HARDCODED_SPLITS, SEED, MAX_NORM
-from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
+from config import *
+from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
+                   make_kfolds, compute_per_participant_stds,
+                   print_determinism_summary, prefix_results)
 from data import build_support_query
 from models import SingleTaskModel
 from dataset_configs.vreed import load_vreed_df_mtml
-from paths import RESULTS_DIR
+from training import aggregate_mtml_results
 
 hardcoded_splits = HARDCODED_SPLITS
-BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
-output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_PureMeta')
+BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
+output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_PureMeta')
 os.makedirs(output_dir, exist_ok=True)
 
-WINDOW_SIZE = 2560; STRIDE = 1280
-N_FOLDS = 5; L2_LAMBDA = 1e-5
 meta_steps_grid  = [50]
 meta_lr_grid     = [0.01]
 inner_steps_grid = [10]
@@ -54,14 +39,13 @@ train_participants = sorted([p for p in participant_ids if p not in test_partici
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
 
 
-
 # =============================
-# INNER LOOP (model only, no separate head)
+# INNER LOOP
 # =============================
 def adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2_lambda):
     adapted = copy.deepcopy(model).to(device); adapted.train()
-    opt = optim.Adam(adapted.parameters(), lr=inner_lr)
-    sched = ReduceLROnPlateau(opt, 'min', 0.1, 3)
+    opt     = optim.Adam(adapted.parameters(), lr=inner_lr)
+    sched   = ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
     for step in range(inner_steps):
         ep_loss = 0.0; nb = 0
@@ -69,37 +53,33 @@ def adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2_lambda):
             Xb, yb = Xb.to(device), yb.to(device)
             opt.zero_grad()
             loss = loss_fn(adapted(Xb), yb)
-            l2 = l2_lambda * sum(p.norm(2)**2 for p in adapted.parameters() if p.requires_grad)
+            l2   = l2_lambda * sum(p.norm(2)**2 for p in adapted.parameters() if p.requires_grad)
             loss = loss + l2
             if not torch.isnan(loss):
-                loss.backward(); torch.nn.utils.clip_grad_norm_(adapted.parameters(), MAX_NORM); opt.step()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(adapted.parameters(), MAX_NORM)
+                opt.step()
             ep_loss += loss.item(); nb += 1
         if nb > 0: sched.step(ep_loss / nb)
     return adapted
 
 
 def make_sup_q_loader(df_user, splits, uid, ar_or_va, seed=SEED):
-    """Build support/query loaders from user's train/test trials."""
-    return build_support_query(
-        df_user,
-        splits[uid]['train'],
-        splits[uid]['test'],
-        ar_or_va,
-        seed=seed,
-        window_size=WINDOW_SIZE,
-        stride=STRIDE)
+    return build_support_query(df_user, splits[uid]['train'], splits[uid]['test'],
+                               ar_or_va, seed=seed, window_size=WINDOW_SIZE, stride=STRIDE)
 
 
 # =============================
 # META TRAINING
 # =============================
 def reptile_train(model, train_users, meta_steps, meta_lr, inner_steps, inner_lr, l2, ar_or_va, seed):
-    rng = np.random.default_rng(seed); uids = sorted(train_users.keys())
+    rng  = np.random.default_rng(seed)
+    uids = sorted(train_users.keys())
     model.to(device)
     for step in range(meta_steps):
-        uid = int(rng.choice(uids))
+        uid        = int(rng.choice(uids))
         sup_loader, _ = make_sup_q_loader(train_users[uid], hardcoded_splits, uid, ar_or_va, seed)
-        adapted = adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2)
+        adapted    = adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2)
         with torch.no_grad():
             for p, pa in zip(model.parameters(), adapted.parameters()):
                 p.data.add_(meta_lr * (pa.data - p.data))
@@ -111,17 +91,18 @@ def reptile_train(model, train_users, meta_steps, meta_lr, inner_steps, inner_lr
 # =============================
 def hyperparameter_tuning(label_type='ar'):
     print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type.upper()}] PureMeta\n{'='*60}")
-    results = []; train_folds = make_kfolds(train_participants)
+    results     = []
+    train_folds = make_kfolds(train_participants)
     for ms in meta_steps_grid:
         for mlr in meta_lr_grid:
             for isp in inner_steps_grid:
                 for ilr in inner_lr_grid:
                     fold_f1s = []
                     for fold_i in range(N_FOLDS):
-                        val_ps = train_folds[fold_i]
-                        tr_ps  = [p for j,f in enumerate(train_folds) if j != fold_i for p in f]
+                        val_ps   = train_folds[fold_i]
+                        tr_ps    = [p for j, f in enumerate(train_folds) if j != fold_i for p in f]
                         tr_users = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in tr_ps}
-                        val_users = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in val_ps}
+                        val_users= {uid: df[df['ID']==uid].reset_index(drop=True) for uid in val_ps}
                         try:
                             model = SingleTaskModel().to(device)
                             model = reptile_train(model, tr_users, ms, mlr, isp, ilr, L2_LAMBDA, label_type, SEED)
@@ -147,7 +128,7 @@ def hyperparameter_tuning(label_type='ar'):
                     if not fold_f1s: continue
                     avg = np.mean(fold_f1s)
                     results.append({'ms': ms, 'mlr': mlr, 'isp': isp, 'ilr': ilr,
-                                     'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
+                                    'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
                     print(f"  avg f1={avg:.4f}")
     if not results: return 50, 0.01, 10, 1e-3
     best = max(results, key=lambda x: x['avg_f1'])
@@ -194,62 +175,49 @@ if __name__ == '__main__':
                 for Xb, yb in q_loader:
                     probs.extend(torch.sigmoid(adapted(Xb.to(device))).cpu().numpy().flatten())
                     labels_list.extend(yb.numpy().flatten())
-            y_true = np.array(labels_list).astype(int); y_prob = np.array(probs)
+            y_true = np.array(labels_list).astype(int)
+            y_prob = np.array(probs)
             y_pred = (y_prob > 0.5).astype(int)
-            cm = confusion_matrix(y_true, y_pred, labels=[0,1])
+            cm     = confusion_matrix(y_true, y_pred, labels=[0, 1])
             acc, prec, rec, f1 = compute_metrics_from_cm(cm)
             results.append({'participant_id': uid, 'y_true': y_true, 'y_pred': y_pred,
                              'y_pred_probs': y_prob, 'cm': cm,
                              'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1})
             print(f"  Participant {uid}: Acc={acc:.4f} F1={f1:.4f}")
 
-    def aggregate(results, label):
-        all_true  = np.concatenate([r['y_true'] for r in results])
-        all_pred  = np.concatenate([r['y_pred'] for r in results])
-        all_probs = np.concatenate([r['y_pred_probs'] for r in results])
-        cm = confusion_matrix(all_true, all_pred, labels=[0,1])
-        acc, prec, rec, f1 = compute_metrics_from_cm(cm)
-        auc_val, fpr, tpr = safe_roc_auc(all_true, all_probs)
-        print(f"\n{label}: Acc={acc:.4f} F1={f1:.4f} AUC={auc_val:.4f}")
-        return all_true, all_probs, cm, acc, prec, rec, f1, auc_val, fpr, tpr
+    agg = aggregate_mtml_results(results_ar, results_va)
 
-    all_true_ar, all_probs_ar, cm_AR, ar_acc, ar_prec, ar_rec, ar_f1, ar_auc, ar_fpr, ar_tpr = aggregate(results_ar, 'AR')
-    all_true_va, all_probs_va, cm_VA, va_acc, va_prec, va_rec, va_f1, va_auc, va_fpr, va_tpr = aggregate(results_va, 'VA')
-
-    global_roc = {'AR': {'fpr': ar_fpr, 'tpr': ar_tpr, 'auc': ar_auc, 'y_true': all_true_ar, 'y_pred_probs': all_probs_ar},
-                  'VA': {'fpr': va_fpr, 'tpr': va_tpr, 'auc': va_auc, 'y_true': all_true_va, 'y_pred_probs': all_probs_va}}
+    global_roc = {
+        'AR': {'fpr': agg['fpr_ar'], 'tpr': agg['tpr_ar'], 'auc': agg['ar_auc'],
+               'y_true': agg['all_true_ar'], 'y_pred_probs': agg['all_probs_ar']},
+        'VA': {'fpr': agg['fpr_va'], 'tpr': agg['tpr_va'], 'auc': agg['va_auc'],
+               'y_true': agg['all_true_va'], 'y_pred_probs': agg['all_probs_va']},
+    }
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
         pickle.dump(global_roc, f)
 
+    ar_stds = compute_per_participant_stds(prefix_results(results_ar, 'ar'), 'ar')
+    va_stds = compute_per_participant_stds(prefix_results(results_va, 'va'), 'va')
+
     final_results = {
         'train_participants': train_participants, 'test_participants': test_participants,
-        'best_hyperparameters': {'AR': {'meta_steps': bms_ar, 'meta_lr': bmlr_ar, 'inner_steps': bisp_ar, 'inner_lr': bilr_ar, 'l2_lambda': L2_LAMBDA},
-                                  'VA': {'meta_steps': bms_va, 'meta_lr': bmlr_va, 'inner_steps': bisp_va, 'inner_lr': bilr_va, 'l2_lambda': L2_LAMBDA}},
-        'ar_acc': ar_acc, 'ar_precision': ar_prec, 'ar_recall': ar_rec, 'ar_f1': ar_f1, 'ar_auc': ar_auc,
-        'va_acc': va_acc, 'va_precision': va_prec, 'va_recall': va_rec, 'va_f1': va_f1, 'va_auc': va_auc,
+        'best_hyperparameters': {
+            'AR': {'meta_steps': bms_ar, 'meta_lr': bmlr_ar, 'inner_steps': bisp_ar,
+                   'inner_lr': bilr_ar, 'l2_lambda': L2_LAMBDA},
+            'VA': {'meta_steps': bms_va, 'meta_lr': bmlr_va, 'inner_steps': bisp_va,
+                   'inner_lr': bilr_va, 'l2_lambda': L2_LAMBDA}},
+        **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
+        **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
         'test_results_per_participant_ar': results_ar,
         'test_results_per_participant_va': results_va,
-        'cm_ar': cm_AR, 'cm_va': cm_VA,
+        'cm_ar': agg['cm_ar'], 'cm_va': agg['cm_va'],
     }
     with open(os.path.join(output_dir, 'puremeta_results.pkl'), 'wb') as f:
         pickle.dump(final_results, f)
 
-    # =============================
-    # DETERMINISM SUMMARY
-    # =============================
-    from utils import compute_per_participant_stds, print_determinism_summary
-
-    def _prefix(results, prefix):
-        return [{f"{prefix}_acc": r["accuracy"], f"{prefix}_precision": r["precision"],
-                 f"{prefix}_recall": r["recall"], f"{prefix}_f1": r["f1"],
-                 f"y_true_{prefix}": r["y_true"], f"y_pred_probs_{prefix}": r["y_pred_probs"]}
-                for r in results]
-
-    ar_stds = compute_per_participant_stds(_prefix(results_ar, "ar"), "ar")
-    va_stds = compute_per_participant_stds(_prefix(results_va, "va"), "va")
     print_determinism_summary(
-        {f"ar_{k}": final_results[f"ar_{k}"] for k in ["auc", "acc", "precision", "recall", "f1"]},
-        {f"va_{k}": final_results[f"va_{k}"] for k in ["auc", "acc", "precision", "recall", "f1"]},
+        {f'ar_{k}': final_results[f'ar_{k}'] for k in ['auc','acc','precision','recall','f1']},
+        {f'va_{k}': final_results[f'va_{k}'] for k in ['auc','acc','precision','recall','f1']},
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")

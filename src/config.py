@@ -1,26 +1,79 @@
+# =============================
+# ENVIRONMENT  (must come before any torch import)
+# =============================
 import os
-
-# =============================
-# ENVIRONMENT (must be set before torch import)
-# =============================
+import sys
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 os.environ["PYTHONHASHSEED"] = str(42)
 
 # =============================
+# SHARED IMPORTS
+# =============================
+import gc
+import copy
+import pickle
+
+import numpy as np
+import pandas as pd
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.data import TensorDataset, DataLoader
+
+from sklearn.metrics import (
+    confusion_matrix,
+    roc_auc_score,
+    roc_curve,
+    auc,
+    f1_score,
+)
+
+# =============================
+# PATHS
+# =============================
+_REPO_ROOT  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR    = os.path.join(_REPO_ROOT, 'data')
+RESULTS_DIR = os.path.join(_REPO_ROOT, 'results')
+CSV_PATH    = os.path.join(DATA_DIR, 'VREED_data_v2.csv')
+PKL_PATH    = os.path.join(DATA_DIR, 'unique_id_trials_VREED_v2.pkl')
+
+# =============================
 # TRAINING CONSTANTS
 # =============================
-SEED = 42
+SEED        = 42
 WINDOW_SIZE = 2560
-STRIDE = 1280
-N_FOLDS = 5
-MAX_NORM = 1.0
-EPOCHS = 30
+STRIDE      = 1280
+N_FOLDS     = 5
+MAX_NORM    = 1.0
+EPOCHS      = 30
 
-# Batch sizes differ by training regime — kept per-script,
-# but defaults are provided here for reference:
-#   PSTL  : 32
-#   STL   : 8
-#   MTL-* : 26
+# =============================
+# BATCH SIZES
+# =============================
+PSTL_BATCH_SIZE = 32
+STL_BATCH_SIZE  = 8
+MTL_BATCH_SIZE  = 26
+SI_BATCH_SIZE   = 32
+
+# =============================
+# MTL LEARNING RATES / L2
+# =============================
+MTL_SHARED_LR = 3e-4
+MTL_TASK_LR   = 1e-4
+MTL_L2_TASK   = 1e-5
+MTL_L2_SHARED = 0.0
+
+# =============================
+# META-LEARNING DEFAULTS
+# =============================
+META_STEPS   = 50
+META_LR      = 0.01
+INNER_STEPS  = 10
+INNER_LR     = 1e-3
+EPISODE_SIZE = 5
+L2_LAMBDA    = 1e-5
 
 # =============================
 # HARDCODED 10/2 TRAIN/TEST SPLITS
