@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
 import pandas as pd
-from paths import CSV_PATH
+from config import CSV_PATH
 
 
 if __name__ == '__main__':

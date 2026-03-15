@@ -16,7 +16,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import pearsonr, spearmanr, ttest_rel, ttest_ind, levene
-from paths import RESULTS_DIR
+from config import RESULTS_DIR
 
 BASE_OUTPUT_DIR = RESULTS_DIR
 

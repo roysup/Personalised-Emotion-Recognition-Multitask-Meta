@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from paths import RESULTS_DIR
+from config import RESULTS_DIR
 
 BASE_OUTPUT_DIR = RESULTS_DIR
 

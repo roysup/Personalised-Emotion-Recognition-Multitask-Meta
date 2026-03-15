@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc
-from paths import RESULTS_DIR
+from config import RESULTS_DIR
 
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
 
