@@ -26,7 +26,8 @@ from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfo
 from data import create_sliding_windows, BalancedSamplerMTML
 from dataset_configs.vreed import load_vreed_df
 from models import BaseFeatureExtractor
-from config import RESULTS_DIR
+from config import RESULTS_DIR, EPOCHS, WINDOW_SIZE, STRIDE, N_FOLDS
+from training import compute_l2_split
 
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
@@ -130,13 +131,6 @@ class MultiTaskModel(nn.Module):
         return out
 
 
-def compute_l2(model):
-    l2s = L2_SHARED * sum(p.norm(2)**2 for p in model.backbone.parameters() if p.requires_grad)
-    l2t = L2_TASK * (sum(p.norm(2)**2 for m in model.dense1 for p in m.parameters() if p.requires_grad) +
-                     sum(p.norm(2)**2 for m in model.dense2 for p in m.parameters() if p.requires_grad) +
-                     sum(p.norm(2)**2 for m in model.out     for p in m.parameters() if p.requires_grad))
-    return l2s + l2t
-
 
 # =============================
 # HYPERPARAMETER TUNING
@@ -160,7 +154,10 @@ def train_fold(model, loader, lr, epochs):
         for Xb, yb, tids, _ in loader:
             Xb, yb, tids = Xb.to(device), yb.to(device), tids.to(device)
             opt.zero_grad()
-            loss = loss_fn(model(Xb, tids), yb).squeeze(-1).mean() + compute_l2(model)
+            loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean() +
+                     compute_l2_split(model.backbone.parameters(),
+                         [p for m in (model.dense1, model.dense2, model.out)
+                          for mm in m for p in mm.parameters()]))
             if torch.isnan(loss): return None
             loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += loss.item()
@@ -236,7 +233,10 @@ if __name__ == '__main__':
             for Xb, yb, tids, _ in loader:
                 Xb, yb, tids = Xb.to(device), yb.to(device), tids.to(device)
                 opt.zero_grad()
-                loss = loss_fn(model(Xb, tids), yb).squeeze(-1).mean() + compute_l2(model)
+                loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean() +
+                     compute_l2_split(model.backbone.parameters(),
+                         [p for m in (model.dense1, model.dense2, model.out)
+                          for mm in m for p in mm.parameters()]))
                 if torch.isnan(loss): raise ValueError(f"NaN epoch {ep}")
                 loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
                 opt.step(); run += loss.item()

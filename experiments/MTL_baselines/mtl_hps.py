@@ -9,14 +9,15 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
-from data import create_sliding_windows, make_combined_mtl_loader
+from data import create_sliding_windows, make_mtl_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import MTLModel
 from utils import set_all_seeds, compute_metrics_from_cm, create_kfold_splits
-from training import aggregate_results, save_all_results, evaluate_mtl_all
+from training import save_all_results, evaluate_mtl_all
+from utils import aggregate_results
 
 BATCH_SIZE = MTL_BATCH_SIZE
-NUM_TASKS  = 26
+NUM_TASKS  = len(participant_ids)
 SHARED_LR  = MTL_SHARED_LR
 TASK_LR    = MTL_TASK_LR
 L2_TASK    = MTL_L2_TASK
@@ -26,6 +27,7 @@ OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+set_all_seeds(SEED)
 print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
 
 # =============================
@@ -41,10 +43,9 @@ def _l2_task_only(model):
                          if p.requires_grad)
 
 def _train_mtl(label_type, lr_shared, lr_task, l2_fn, train_data_dict):
-    loader, _, _ = make_combined_mtl_loader(
+    loader, _, _ = make_mtl_loader(
         train_data_dict, WINDOW_SIZE, STRIDE,
-        label_type=label_type, batch_size=BATCH_SIZE,
-        num_tasks=NUM_TASKS, seed=SEED)
+        label_type=label_type, batch_size=BATCH_SIZE, seed=SEED)
 
     model = MTLModel(NUM_TASKS).to(device)
     opt   = optim.Adam([
@@ -102,10 +103,9 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
                         val_data[task_idx]   = p_df[p_df['Trial'].isin(va_v)].reset_index(drop=True)
 
                     set_all_seeds(SEED)
-                    loader, _, _ = make_combined_mtl_loader(
+                    loader, _, _ = make_mtl_loader(
                         train_data, WINDOW_SIZE, STRIDE,
-                        label_type=label_type, batch_size=BATCH_SIZE,
-                        num_tasks=NUM_TASKS, seed=SEED)
+                        label_type=label_type, batch_size=BATCH_SIZE, seed=SEED)
 
                     model = MTLModel(NUM_TASKS).to(device)
                     opt   = optim.Adam([

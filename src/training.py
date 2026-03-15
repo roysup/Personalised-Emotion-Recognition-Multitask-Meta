@@ -4,14 +4,172 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix
 
-from utils import compute_metrics_from_cm, safe_roc_auc
+from utils import (compute_metrics_from_cm, safe_roc_auc,
+                   aggregate_results, aggregate_mtml_results)
 
 
 # =============================
 # GENERIC TRAINING LOOP
 # =============================
 
+def train_model(model, train_loader, optimizer, scheduler,
+                epochs, max_norm, l2_fn, device,
+                label='', checkpoint_path=None,
+                grad_modifier=None, seed_fn=None):
+    """
+    Generic training loop shared by all model types.
 
+    Parameters
+    ----------
+    model            : nn.Module
+    train_loader     : DataLoader — batches of (X, y, task_ids [, trial_ids])
+    optimizer        : torch Optimizer
+    scheduler        : LR scheduler (ReduceLROnPlateau)
+    epochs           : int
+    max_norm         : float — gradient clip norm
+    l2_fn            : callable(model) -> scalar tensor — returns L2 reg term,
+                       or None for no regularisation
+    device           : torch.device
+    label            : str — printed in progress lines
+    checkpoint_path  : str or None — saves model at best train loss if provided
+    grad_modifier    : callable(optimizer, per_task_losses, shared_params) -> None
+                       for PCGrad; if None uses standard backward
+    seed_fn          : callable() -> None — called once before the loop starts
+                       (pass set_all_seeds(SEED) as a lambda)
+
+    Returns
+    -------
+    history : dict {'train_loss': [...]}
+    """
+    if seed_fn is not None:
+        seed_fn()
+
+    loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+    best_loss = float('inf')
+    history = {'train_loss': []}
+
+    for epoch in range(epochs):
+        model.train()
+        running_loss = 0.0
+
+        for batch in train_loader:
+            # Unpack — loaders may yield 3 or 4 tensors
+            X_batch = batch[0].to(device)
+            y_batch = batch[1].to(device)
+            task_ids = batch[2].to(device) if len(batch) > 2 else None
+
+            optimizer.zero_grad(set_to_none=True)
+
+            if task_ids is not None:
+                outputs = model(X_batch, task_ids)
+            else:
+                outputs = model(X_batch)
+
+            per_sample_loss = loss_fn(outputs, y_batch).squeeze(-1)
+
+            if grad_modifier is not None:
+                # PCGrad path: caller supplies the modifier
+                grad_modifier(optimizer, per_sample_loss, task_ids, outputs)
+                total_loss = per_sample_loss.mean()
+                if l2_fn is not None:
+                    total_loss = total_loss + l2_fn(model)
+                total_loss.backward()
+            else:
+                total_loss = per_sample_loss.mean()
+                if l2_fn is not None:
+                    total_loss = total_loss + l2_fn(model)
+                total_loss.backward()
+
+            if torch.isnan(total_loss):
+                raise ValueError(f"NaN loss at epoch {epoch + 1} [{label}]")
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+            optimizer.step()
+            running_loss += total_loss.item()
+
+        avg_loss = running_loss / max(len(train_loader), 1)
+        history['train_loss'].append(avg_loss)
+        scheduler.step(avg_loss)
+
+        if (epoch + 1) % 5 == 0 or epoch == 0:
+            print(f"  [{label}] Epoch {epoch+1}/{epochs}  loss={avg_loss:.4f}")
+
+        if checkpoint_path is not None and avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), checkpoint_path)
+
+    return history
+
+
+# =============================
+# UNCERTAINTY-WEIGHTED TRAINING LOOP
+# =============================
+
+def train_model_uw(model, train_loader, optimizer, scheduler,
+                   epochs, max_norm, l2_fn, device,
+                   label='', checkpoint_path=None, seed_fn=None):
+    """
+    Variant of train_model for uncertainty-weighted MTL.
+    The model must expose a `log_vars` parameter (nn.Parameter of shape [num_tasks]).
+    """
+    if seed_fn is not None:
+        seed_fn()
+
+    loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+    best_loss = float('inf')
+    history = {'train_loss': []}
+
+    for epoch in range(epochs):
+        model.train()
+        running_loss = 0.0
+
+        for batch in train_loader:
+            X_batch  = batch[0].to(device)
+            y_batch  = batch[1].to(device)
+            task_ids = batch[2].to(device)
+
+            if len(torch.unique(task_ids)) != model.num_tasks:
+                raise ValueError(
+                    f"Batch missing tasks: found {len(torch.unique(task_ids))}, "
+                    f"expected {model.num_tasks}")
+
+            optimizer.zero_grad(set_to_none=True)
+
+            outputs          = model(X_batch, task_ids)
+            per_sample_loss  = loss_fn(outputs, y_batch).squeeze(-1)
+            log_vars         = model.log_vars[task_ids]
+            precision        = torch.exp(-log_vars)
+            weighted_loss    = (precision * per_sample_loss + log_vars).mean()
+
+            if l2_fn is not None:
+                weighted_loss = weighted_loss + l2_fn(model)
+
+            if torch.isnan(weighted_loss):
+                raise ValueError(f"NaN loss at epoch {epoch + 1} [{label}]")
+
+            weighted_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+            optimizer.step()
+            running_loss += weighted_loss.item()
+
+        avg_loss = running_loss / max(len(train_loader), 1)
+        history['train_loss'].append(avg_loss)
+        scheduler.step(avg_loss)
+
+        if (epoch + 1) % 5 == 0 or epoch == 0:
+            print(f"  [{label}] Epoch {epoch+1}/{epochs}  loss={avg_loss:.4f}")
+
+        if checkpoint_path is not None and avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), checkpoint_path)
+            print(f"    Checkpoint saved (epoch {epoch+1})")
+
+    return history
+
+
+# =============================
+# PCGRAD GRADIENT MODIFIER
+# =============================
 
 def _pcgrad_project(grad_list):
     """Project gradients to remove conflicting components."""
@@ -27,6 +185,52 @@ def _pcgrad_project(grad_list):
     return torch.mean(torch.stack(grads), dim=0)
 
 
+def make_pcgrad_modifier(shared_params):
+    """
+    Returns a grad_modifier compatible with train_model's signature.
+    Computes per-task gradients on shared_params, projects them,
+    then overwrites shared_params.grad after the caller's .backward().
+    """
+    def modifier(optimizer, per_sample_loss, task_ids, outputs):
+        unique_tasks = torch.unique(task_ids)
+        task_grads   = []
+        for t in unique_tasks:
+            mask   = (task_ids == t)
+            loss_t = per_sample_loss[mask].mean()
+            optimizer.zero_grad(set_to_none=True)
+            grads = torch.autograd.grad(
+                loss_t, shared_params,
+                retain_graph=True, create_graph=False, allow_unused=True)
+            flat = []
+            for p, g in zip(shared_params, grads):
+                flat.append(g.contiguous().view(-1) if g is not None
+                            else torch.zeros_like(p).view(-1))
+            task_grads.append(torch.cat(flat))
+
+        projected = _pcgrad_project(task_grads)
+
+        # Will be applied after caller calls .backward() in train_model
+        # Store on a side-channel so train_model can apply it post-backward.
+        modifier._projected = projected
+        modifier._params    = shared_params
+
+    def post_backward_hook():
+        if hasattr(modifier, '_projected'):
+            offset = 0
+            for p in modifier._params:
+                n = p.numel()
+                if p.grad is None:
+                    p.grad = torch.zeros_like(p)
+                p.grad.copy_(modifier._projected[offset: offset + n].view_as(p))
+                offset += n
+
+    modifier.post_backward = post_backward_hook
+    return modifier
+
+
+# =============================
+# EVALUATION
+# =============================
 
 def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
                              participant_ids, device, is_mtl=False):
@@ -150,42 +354,6 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
 
     return results
 
-
-def aggregate_results(results):
-    """
-    Concatenate per-participant arrays and compute aggregate confusion matrix + metrics.
-
-    Returns
-    -------
-    dict with keys: cm_ar, cm_va, ar_acc/precision/recall/f1, va_*, auc_ar, auc_va,
-                    fpr_ar, tpr_ar, fpr_va, tpr_va
-    """
-    all_true_ar  = np.concatenate([r['y_true_ar']       for r in results])
-    all_pred_ar  = np.concatenate([r['y_pred_ar']       for r in results])
-    all_probs_ar = np.concatenate([r['y_pred_probs_ar'] for r in results])
-    all_true_va  = np.concatenate([r['y_true_va']       for r in results])
-    all_pred_va  = np.concatenate([r['y_pred_va']       for r in results])
-    all_probs_va = np.concatenate([r['y_pred_probs_va'] for r in results])
-
-    cm_ar = confusion_matrix(all_true_ar, all_pred_ar, labels=[0, 1])
-    cm_va = confusion_matrix(all_true_va, all_pred_va, labels=[0, 1])
-
-    ar_acc, ar_prec, ar_rec, ar_f1 = compute_metrics_from_cm(cm_ar)
-    va_acc, va_prec, va_rec, va_f1 = compute_metrics_from_cm(cm_va)
-
-    auc_ar, fpr_ar, tpr_ar = safe_roc_auc(all_true_ar, all_probs_ar)
-    auc_va, fpr_va, tpr_va = safe_roc_auc(all_true_va, all_probs_va)
-
-    return {
-        'cm_ar':        cm_ar,       'cm_va':        cm_va,
-        'ar_acc':       ar_acc,      'va_acc':       va_acc,
-        'ar_precision': ar_prec,     'va_precision': va_prec,
-        'ar_recall':    ar_rec,      'va_recall':    va_rec,
-        'ar_f1':        ar_f1,       'va_f1':        va_f1,
-        'ar_auc':       auc_ar,      'va_auc':       auc_va,
-        'fpr_ar':       fpr_ar,      'tpr_ar':       tpr_ar,
-        'fpr_va':       fpr_va,      'tpr_va':       tpr_va,
-    }
 
 
 # =============================
@@ -469,41 +637,3 @@ def evaluate_mtl_all(model_ar, model_va, test_data_dict,
 # MTML AGGREGATION  (was local aggregate() duplicated in si / pure_meta / reptile_*)
 # =============================
 
-def aggregate_mtml_results(results_ar, results_va):
-    """
-    Concatenate per-participant MTML results and return aggregate metrics for
-    both AR and VA in one call.  Result dicts must have keys:
-    y_true, y_pred, y_pred_probs, (optionally accuracy/precision/recall/f1).
-
-    Returns
-    -------
-    dict with keys mirroring aggregate_results():
-        cm_ar, cm_va,
-        ar_acc, ar_precision, ar_recall, ar_f1, ar_auc, fpr_ar, tpr_ar,
-        va_acc, va_precision, va_recall, va_f1, va_auc, fpr_va, tpr_va,
-        all_true_ar, all_probs_ar, all_true_va, all_probs_va
-    """
-    def _agg_one(results, label):
-        all_true  = np.concatenate([r['y_true']       for r in results])
-        all_pred  = np.concatenate([r['y_pred']        for r in results])
-        all_probs = np.concatenate([r['y_pred_probs']  for r in results])
-        cm = confusion_matrix(all_true, all_pred, labels=[0, 1])
-        acc, prec, rec, f1 = compute_metrics_from_cm(cm)
-        auc_val, fpr, tpr  = safe_roc_auc(all_true, all_probs)
-        print(f"\n{label}: Acc={acc:.4f} F1={f1:.4f} AUC={auc_val:.4f}")
-        return all_true, all_probs, cm, acc, prec, rec, f1, auc_val, fpr, tpr
-
-    all_true_ar, all_probs_ar, cm_AR, ar_acc, ar_prec, ar_rec, ar_f1, ar_auc, ar_fpr, ar_tpr = _agg_one(results_ar, 'AR')
-    all_true_va, all_probs_va, cm_VA, va_acc, va_prec, va_rec, va_f1, va_auc, va_fpr, va_tpr = _agg_one(results_va, 'VA')
-
-    return {
-        'cm_ar': cm_AR,         'cm_va': cm_VA,
-        'ar_acc': ar_acc,       'ar_precision': ar_prec,
-        'ar_recall': ar_rec,    'ar_f1': ar_f1,
-        'ar_auc': ar_auc,       'fpr_ar': ar_fpr,  'tpr_ar': ar_tpr,
-        'va_acc': va_acc,       'va_precision': va_prec,
-        'va_recall': va_rec,    'va_f1': va_f1,
-        'va_auc': va_auc,       'fpr_va': va_fpr,  'tpr_va': va_tpr,
-        'all_true_ar': all_true_ar,   'all_probs_ar': all_probs_ar,
-        'all_true_va': all_true_va,   'all_probs_va': all_probs_va,
-    }

@@ -138,60 +138,9 @@ def build_support_query(task_df, support_trials, query_trials, ar_or_va='ar',
 
 class BalancedSampler(Sampler):
     """
-    Ensures each batch contains exactly one sample per participant.
-    Uses a numpy Generator for deterministic, stateful shuffling across epochs.
-    """
-
-    def __init__(self, task_ids, num_tasks, samples_per_task, seed=None):
-        self.task_ids        = task_ids
-        self.num_tasks       = num_tasks
-        self.samples_per_task = samples_per_task
-        self.num_batches     = max(samples_per_task.values())
-        self.rng             = np.random.default_rng(seed)
-
-        self.task_indices = {}
-        for t in range(num_tasks):
-            idx = np.where(task_ids == t)[0]
-            if len(idx) == 0:
-                raise ValueError(f"No samples for task {t}")
-            self.task_indices[t] = idx
-
-    def __iter__(self):
-        indices = []
-        for t in range(self.num_tasks):
-            idx = self.task_indices[t]
-            if len(idx) < self.num_batches:
-                sampled = self.rng.choice(idx, size=self.num_batches, replace=True)
-            else:
-                sampled = self.rng.permutation(idx)
-                if len(idx) > self.num_batches:
-                    sampled = sampled[:self.num_batches]
-            if len(sampled) < self.num_batches:
-                extra = self.rng.choice(idx,
-                                        size=self.num_batches - len(sampled),
-                                        replace=True)
-                sampled = np.concatenate([sampled, extra])
-            indices.append(sampled)
-
-        indices = np.array(indices).T.flatten()
-        batch_order = self.rng.permutation(self.num_batches)
-
-        shuffled = []
-        for b in batch_order:
-            shuffled.extend(indices[b * self.num_tasks: (b + 1) * self.num_tasks])
-        return iter(shuffled)
-
-    def __len__(self):
-        return self.num_batches * self.num_tasks
-
-
-class BalancedSamplerMTML(Sampler):
-    """
-    BalancedSampler variant for MTML scripts where the set of active task IDs
-    is variable (fold-based tuning, mixed train/test sets, skipped participants).
-
-    Unlike BalancedSampler, this takes an explicit list of present task IDs
-    rather than a contiguous range(num_tasks), so gaps are handled safely.
+    Balanced sampler for multi-task learning.
+    Each batch contains exactly one sample per active task (participant).
+    Uses oversampling for tasks with fewer samples than the maximum.
 
     Parameters
     ----------
@@ -213,6 +162,7 @@ class BalancedSamplerMTML(Sampler):
         for t in self.present_tasks:
             idx = self.task_indices[t]
             if len(idx) < self.num_batches:
+                # Oversample smaller tasks so all tasks have equal representation
                 sampled = self.rng.choice(idx, size=self.num_batches, replace=True)
             else:
                 sampled = self.rng.permutation(idx)[:self.num_batches]
@@ -234,9 +184,47 @@ class BalancedSamplerMTML(Sampler):
 # LOADER BUILDERS
 # =============================
 
+def make_single_task_loaders(tasks_dict, window_size, stride,
+                             label_type, batch_size, seed,
+                             split_type='train', shuffle=True):
+    """
+    Build one DataLoader per participant (used by STL and PSTL per-participant eval).
 
-def make_combined_mtl_loader(tasks_dict, window_size, stride,
-                             label_type, batch_size, num_tasks, seed):
+    Returns
+    -------
+    loaders : dict {task_idx: DataLoader}
+    """
+    loaders = {}
+    for task_idx in sorted(tasks_dict.keys()):
+        task_data = tasks_dict[task_idx]
+        X, y_ar, y_va, _, trial_ids = create_sliding_windows(
+            task_data, window_size, stride, task_id=task_idx)
+
+        if len(X) == 0:
+            print(f"  Warning: no windows for task {task_idx} ({split_type}), skipping.")
+            continue
+
+        #X_t     = torch.tensor(X,          dtype=torch.float32).permute(0, 2, 1)
+        X_t = torch.tensor(X, dtype=torch.float32)
+        y_t     = torch.tensor(y_ar if label_type == 'ar' else y_va,
+                               dtype=torch.float32).unsqueeze(1)
+        tids_t  = torch.tensor(trial_ids,  dtype=torch.long)
+        dataset = TensorDataset(X_t, y_t, tids_t)
+
+        if shuffle:
+            g = torch.Generator()
+            g.manual_seed(seed)
+            loader = DataLoader(dataset, batch_size=batch_size,
+                                shuffle=True, num_workers=0, generator=g)
+        else:
+            loader = DataLoader(dataset, batch_size=batch_size,
+                                shuffle=False, num_workers=0)
+        loaders[task_idx] = loader
+    return loaders
+
+
+def make_mtl_loader(tasks_dict, window_size, stride,
+                     label_type, batch_size, seed):
     """
     Combine all participants into one dataset with a BalancedSampler (used by MTL variants).
 
@@ -275,17 +263,17 @@ def make_combined_mtl_loader(tasks_dict, window_size, stride,
     trids_t  = torch.tensor(all_trial_ids, dtype=torch.long)
 
     dataset = TensorDataset(X_t, y_t, tids_t, trids_t)
-    sampler = BalancedSampler(all_task_ids, num_tasks, samples_per_task, seed=seed)
+    sampler = BalancedSampler(all_task_ids, list(samples_per_task.keys()), samples_per_task, seed=seed)
     loader  = DataLoader(dataset, batch_size=batch_size,
                          sampler=sampler, num_workers=0)
     return loader, len(dataset), sampler
 
 
 # =============================
-# ARRAY LOADER  (was make_loader() duplicated in si / stl / tlft / pstl)
+# ARRAY LOADER
 # =============================
 
-def make_array_loader(X, y, batch_size, shuffle, seed=42):
+def arrays_to_loader(X, y, batch_size, shuffle, seed=42):
     """
     Build a DataLoader directly from numpy arrays.
     Replaces the local make_loader() helpers scattered across scripts.
