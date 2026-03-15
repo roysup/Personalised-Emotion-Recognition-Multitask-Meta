@@ -22,8 +22,6 @@ BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_ReptileMeta_ST_episode')
 os.makedirs(output_dir, exist_ok=True)
 
-WINDOW_SIZE = 2560; STRIDE = 1280; N_FOLDS = 5
-L2_SHARED = 0.0; L2_TASK = 1e-5
 meta_steps_grid  = [50];  meta_lr_grid     = [0.01]
 inner_steps_grid = [10];  inner_lr_grid    = [1e-3]
 

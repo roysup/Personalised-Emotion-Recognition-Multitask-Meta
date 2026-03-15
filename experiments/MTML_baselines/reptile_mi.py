@@ -23,11 +23,6 @@ BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_ReptileMeta_MI_episode')
 os.makedirs(output_dir, exist_ok=True)
 
-WINDOW_SIZE = 2560; STRIDE = 1280
-L2_SHARED = 0.0; L2_TASK = 1e-5
-META_STEPS = 50; META_LR = 0.01
-INNER_STEPS = 10; INNER_LR = 1e-3
-EPISODE_SIZE = 5
 
 set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

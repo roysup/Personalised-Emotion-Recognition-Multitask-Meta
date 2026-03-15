@@ -18,7 +18,7 @@ if os.path.join(_REPO_ROOT, 'src') not in sys.path:
     sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 
 from config import HARDCODED_SPLITS
-from paths import CSV_PATH, PKL_PATH
+from config import CSV_PATH, PKL_PATH
 
 # Use the symlink created: ln -s "Phase A/data" data
 # CSV_PATH = os.path.join(_REPO_ROOT, 'data', 'VREED_data_v2.csv')
