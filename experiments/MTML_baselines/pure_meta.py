@@ -104,7 +104,7 @@ def hyperparameter_tuning(label_type='ar'):
                         try:
                             model = SingleTaskModel().to(device)
                             model = reptile_train(model, tr_users, ms, mlr, isp, ilr, L2_LAMBDA, label_type, SEED)
-                        except: continue
+                        except Exception: continue
                         val_f1s = []
                         for uid in val_ps:
                             sup_loader, q_loader = make_sup_q_loader(val_users[uid], hardcoded_splits, uid, label_type)

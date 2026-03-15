@@ -85,7 +85,7 @@ def _train_uw(label_type, lr_shared, lr_task, lr_logvar, l2_task, train_data_dic
             best_loss = avg
             torch.save(model.state_dict(), ckpt_path)
 
-    model.load_state_dict(torch.load(ckpt_path))
+    model.load_state_dict(torch.load(ckpt_path, weights_only=True))
     return model
 
 # =============================

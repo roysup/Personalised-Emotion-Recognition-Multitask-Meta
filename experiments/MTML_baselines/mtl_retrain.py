@@ -177,8 +177,8 @@ def hyperparameter_tuning(label_type='ar'):
         for fold_i in range(N_FOLDS):
             val_ps = train_folds[fold_i]
             tr_ps  = [p for j,f in enumerate(train_folds) if j != fold_i for p in f]
-            tr_tasks = {uid: df[df['ID']==uid][df['Trial'].isin(hardcoded_splits[uid]['train'])].reset_index(drop=True) for uid in tr_ps}
-            va_tasks = {uid: df[df['ID']==uid][df['Trial'].isin(hardcoded_splits[uid]['train'])].reset_index(drop=True) for uid in val_ps}
+            tr_tasks = {uid: df[(df['ID']==uid) & (df['Trial'].isin(hardcoded_splits[uid]['train']))].reset_index(drop=True) for uid in tr_ps}
+            va_tasks = {uid: df[(df['ID']==uid) & (df['Trial'].isin(hardcoded_splits[uid]['train']))].reset_index(drop=True) for uid in val_ps}
             tr_loader, _, tr_map = make_combined_loader(tr_tasks, tr_ps, label_type, 'train')
             va_loader, _, va_map = make_combined_loader(va_tasks, val_ps, label_type, 'val')
             if not tr_map or not va_map: continue
@@ -207,8 +207,8 @@ if __name__ == '__main__':
     best_lr_va = hyperparameter_tuning('va')
 
     all_users = sorted(train_participants + test_participants)
-    user_frames = {uid: {'train': df[df['ID']==uid][df['Trial'].isin(hardcoded_splits[uid]['train'])].reset_index(drop=True),
-                         'test':  df[df['ID']==uid][df['Trial'].isin(hardcoded_splits[uid]['test'])].reset_index(drop=True)}
+    user_frames = {uid: {'train': df[(df['ID']==uid) & (df['Trial'].isin(hardcoded_splits[uid]['train']))].reset_index(drop=True),
+                         'test':  df[(df['ID']==uid) & (df['Trial'].isin(hardcoded_splits[uid]['test']))].reset_index(drop=True)}
                    for uid in all_users}
     retrain_tasks = {uid: user_frames[uid]['train'] for uid in all_users}
 

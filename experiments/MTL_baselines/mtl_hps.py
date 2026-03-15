@@ -73,7 +73,7 @@ def _train_mtl(label_type, lr_shared, lr_task, l2_fn, train_data_dict):
             best_loss = avg
             torch.save(model.state_dict(), ckpt_path)
 
-    model.load_state_dict(torch.load(ckpt_path))
+    model.load_state_dict(torch.load(ckpt_path, weights_only=True))
     return model
 
 # =============================

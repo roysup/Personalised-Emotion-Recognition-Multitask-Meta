@@ -206,12 +206,12 @@ def hyperparameter_tuning(label_type='ar'):
             for fold_i in range(N_FOLDS):
                 val_ps = train_folds[fold_i]
                 tr_ps  = [p for j,f in enumerate(train_folds) if j != fold_i for p in f]
-                tr_tasks = {uid: df[df['ID']==uid][df['Trial'].isin(hardcoded_splits[uid]['train'])].reset_index(drop=True) for uid in tr_ps}
+                tr_tasks = {uid: df[(df['ID']==uid) & (df['Trial'].isin(hardcoded_splits[uid]['train']))].reset_index(drop=True) for uid in tr_ps}
                 loader, _, lmap = make_combined_loader(tr_tasks, tr_ps, label_type, 'train')
                 if not lmap: continue
                 try:
                     base = pretrain_mtl(loader, lmap, lr_pt, label_type)
-                except: continue
+                except Exception: continue
                 val_f1s = []
                 for uid in val_ps:
                     u_df = df[df['ID']==uid].reset_index(drop=True)
@@ -246,7 +246,7 @@ if __name__ == '__main__':
     best_lr_pt_ar, best_lr_ft_ar = hyperparameter_tuning('ar')
     best_lr_pt_va, best_lr_ft_va = hyperparameter_tuning('va')
 
-    tr_tasks = {uid: df[df['ID']==uid][df['Trial'].isin(hardcoded_splits[uid]['train'])].reset_index(drop=True)
+    tr_tasks = {uid: df[(df['ID']==uid) & (df['Trial'].isin(hardcoded_splits[uid]['train']))].reset_index(drop=True)
                 for uid in train_participants}
 
     print('\n' + '='*60 + '\nPRETRAINING FINAL AR MTL\n' + '='*60)

@@ -115,7 +115,7 @@ def _train_pcgrad(label_type, lr_shared, lr_task, l2_task, train_data_dict):
             best_loss = avg
             torch.save(model.state_dict(), ckpt_path)
 
-    model.load_state_dict(torch.load(ckpt_path))
+    model.load_state_dict(torch.load(ckpt_path, weights_only=True))
     return model
 
 # =============================
