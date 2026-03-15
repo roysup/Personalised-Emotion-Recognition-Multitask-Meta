@@ -258,4 +258,23 @@ if __name__ == '__main__':
     }
     with open(os.path.join(output_dir, 'puremeta_results.pkl'), 'wb') as f:
         pickle.dump(final_results, f)
+
+    # =============================
+    # DETERMINISM SUMMARY
+    # =============================
+    from utils import compute_per_participant_stds, print_determinism_summary
+
+    def _prefix(results, prefix):
+        return [{f"{prefix}_acc": r["accuracy"], f"{prefix}_precision": r["precision"],
+                 f"{prefix}_recall": r["recall"], f"{prefix}_f1": r["f1"],
+                 f"y_true_{prefix}": r["y_true"], f"y_pred_probs_{prefix}": r["y_pred_probs"]}
+                for r in results]
+
+    ar_stds = compute_per_participant_stds(_prefix(results_ar, "ar"), "ar")
+    va_stds = compute_per_participant_stds(_prefix(results_va, "va"), "va")
+    print_determinism_summary(
+        {f"ar_{k}": final_results[f"ar_{k}"] for k in ["auc", "acc", "precision", "recall", "f1"]},
+        {f"va_{k}": final_results[f"va_{k}"] for k in ["auc", "acc", "precision", "recall", "f1"]},
+        ar_stds, va_stds)
+
     print(f"\n✓ All results saved to: {output_dir}")
