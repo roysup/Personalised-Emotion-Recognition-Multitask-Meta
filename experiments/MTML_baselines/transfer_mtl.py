@@ -37,14 +37,6 @@ output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_TransferMTL')
 model_dir  = os.path.join(output_dir, 'models')
 os.makedirs(output_dir, exist_ok=True); os.makedirs(model_dir, exist_ok=True)
 
-WINDOW_SIZE    = 2560
-STRIDE         = 1280
-PT_EPOCHS      = 30
-FT_EPOCHS      = 10
-FT_BATCH       = 32
-L2_SHARED      = 0.0
-L2_TASK        = 1e-5
-N_FOLDS        = 5
 EARLY_STOP     = 999
 learning_rates_pt = [1e-4]
 learning_rates_ft = [5e-5]
@@ -138,7 +130,7 @@ def pretrain_mtl(loader, local_map, lr, label_type):
     sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss(reduction='none')
     best_loss = float('inf'); best_state = None
-    for ep in range(1, PT_EPOCHS+1):
+    for ep in range(1, EPOCHS+1):
         model.train(); run = 0.0
         for Xb, yb, tids, _ in loader:
             Xb, yb, tids = Xb.to(device), yb.to(device), tids.to(device)
@@ -161,7 +153,7 @@ def finetune_user(base_model, X, y, lr, pid):
     g = torch.Generator(); g.manual_seed(SEED + pid)
     loader = DataLoader(TensorDataset(torch.tensor(X).float(),
                                       torch.tensor(y).float().unsqueeze(1)),
-                        batch_size=FT_BATCH, shuffle=True, generator=g, num_workers=0)
+                        batch_size=FT_BATCH_SIZE, shuffle=True, generator=g, num_workers=0)
     opt = optim.Adam(model.parameters(), lr=lr)
     sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
@@ -183,7 +175,7 @@ def eval_user(model, local_idx, X, y):
     model.eval()
     loader = DataLoader(TensorDataset(torch.tensor(X).float(),
                                       torch.tensor(y).float().unsqueeze(1)),
-                        batch_size=FT_BATCH, shuffle=False, num_workers=0)
+                        batch_size=FT_BATCH_SIZE, shuffle=False, num_workers=0)
     probs, labels = [], []
     tids = None
     with torch.no_grad():

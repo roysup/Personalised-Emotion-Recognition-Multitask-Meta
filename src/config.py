@@ -50,6 +50,8 @@ STRIDE      = 1280
 N_FOLDS     = 5
 MAX_NORM    = 1.0
 EPOCHS      = 30
+FT_EPOCHS      = 10   # fine-tuning epochs (transfer_mtl.py)
+FT_BATCH_SIZE  = 32   # fine-tuning batch size (transfer_mtl.py)
 
 # =============================
 # BATCH SIZES

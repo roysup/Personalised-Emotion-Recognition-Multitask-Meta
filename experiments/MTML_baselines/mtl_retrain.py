@@ -35,12 +35,6 @@ model_dir  = os.path.join(output_dir, 'models')
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(model_dir, exist_ok=True)
 
-WINDOW_SIZE = 2560
-STRIDE      = 1280
-NUM_EPOCHS  = 30
-L2_SHARED   = 0.0
-L2_TASK     = 1e-5
-N_FOLDS     = 5
 EARLY_STOP  = 999
 learning_rates = [1e-4]
 
@@ -198,7 +192,7 @@ def hyperparameter_tuning(label_type='ar'):
             va_loader, _, va_map = make_combined_loader(va_tasks, val_ps, label_type, 'val')
             if not tr_map or not va_map: continue
             model = MultiTaskModel(len(tr_map)).to(device)
-            model = train_fold(model, tr_loader, lr, NUM_EPOCHS)
+            model = train_fold(model, tr_loader, lr, EPOCHS)
             if model is None: continue
             val_f1 = eval_fold(model, va_loader, va_map)
             fold_f1s.append(val_f1)
@@ -237,7 +231,7 @@ if __name__ == '__main__':
         sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
         loss_fn = nn.BCEWithLogitsLoss(reduction='none')
         best_loss = float('inf'); best_state = None
-        for ep in range(1, NUM_EPOCHS+1):
+        for ep in range(1, EPOCHS+1):
             model.train(); run = 0.0; preds, labels = [], []
             for Xb, yb, tids, _ in loader:
                 Xb, yb, tids = Xb.to(device), yb.to(device), tids.to(device)
@@ -252,7 +246,7 @@ if __name__ == '__main__':
             avg = run / max(1, len(loader))
             if ep % 5 == 0 or ep == 1:
                 f1 = f1_score(labels, preds, average='macro', zero_division=0)
-                print(f"  [{label_type.upper()}] Epoch {ep}/{NUM_EPOCHS} loss={avg:.4f} f1={f1:.4f}")
+                print(f"  [{label_type.upper()}] Epoch {ep}/{EPOCHS} loss={avg:.4f} f1={f1:.4f}")
             sched.step(avg)
             if avg < best_loss: best_loss = avg; best_state = {k:v.cpu().clone() for k,v in model.state_dict().items()}
         model.load_state_dict(best_state); return model
