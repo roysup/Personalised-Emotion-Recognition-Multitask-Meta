@@ -21,6 +21,8 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
 
+set_all_seeds(SEED)
+
 # =============================
 # DATA
 # =============================
@@ -129,7 +131,7 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
                     y_tr     = y_ar_tr if label_type == 'ar' else y_va_tr
                     y_va_lbl = y_ar_va if label_type == 'ar' else y_va_va
 
-                    set_all_seeds(SEED)
+                    #set_all_seeds(SEED)
                     model   = SingleTaskModel().to(device)
                     opt     = optim.Adam(model.parameters(), lr=lr)
                     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)

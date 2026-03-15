@@ -23,10 +23,9 @@ BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_ReptileMeta_MI_episode')
 os.makedirs(output_dir, exist_ok=True)
 
-
-set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}\nOutput: {output_dir}")
+set_all_seeds(SEED)
 
 # =============================
 # DATA

@@ -44,9 +44,9 @@ os.makedirs(output_dir, exist_ok=True); os.makedirs(model_dir, exist_ok=True)
 learning_rates_pt = [TRANSFER_MTL_LR_PT]
 learning_rates_ft = [TRANSFER_MTL_LR_FT]
 
-set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}\nOutput: {output_dir}")
+set_all_seeds(SEED)
 
 # =============================
 # DATA
@@ -127,7 +127,7 @@ def add_new_head(model):
 # TRAINING HELPERS
 # =============================
 def pretrain_mtl(loader, local_map, lr, label_type):
-    set_all_seeds(SEED)
+    #set_all_seeds(SEED)
     model = MultiTaskModel(len(local_map)).to(device)
     opt = optim.Adam(model.parameters(), lr=lr)
     sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)

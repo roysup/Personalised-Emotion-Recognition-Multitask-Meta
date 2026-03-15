@@ -48,7 +48,7 @@ def _make_pool_loader(data_df, label_type, shuffle):
 
 
 def _train_single(label_type, lr, l2_lambda):
-    set_all_seeds(SEED)
+    #set_all_seeds(SEED)
     model   = SingleTaskModel().to(device)
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.1, patience=3)
@@ -101,7 +101,7 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
                 if len(tr_fold) == 0 or len(va_fold) == 0:
                     fold_f1s.append(0.0); continue
 
-                set_all_seeds(SEED)
+                #set_all_seeds(SEED)
                 model   = SingleTaskModel().to(device)
                 opt     = optim.Adam(model.parameters(), lr=lr)
                 sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)

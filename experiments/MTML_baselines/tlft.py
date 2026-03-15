@@ -25,9 +25,10 @@ learning_rates_pre = [TF_LR_PRE]
 learning_rates_ft  = [TF_LR_FT]
 l2_lambdas     = [TF_L2]
 
-set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}\nOutput: {output_dir}")
+
+set_all_seeds(SEED)
 
 # =============================
 # DATA
@@ -58,7 +59,7 @@ def _get_windows(sub_df, label_type):
 
 
 def pretrain(X, y, lr, l2_lambda, epochs):
-    set_all_seeds(SEED)
+    #set_all_seeds(SEED)
     model   = SingleTaskModel().to(device)
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)

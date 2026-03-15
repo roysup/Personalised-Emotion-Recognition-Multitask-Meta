@@ -22,9 +22,9 @@ meta_lr_grid     = [META_LR]
 inner_steps_grid = [INNER_STEPS]
 inner_lr_grid    = [INNER_LR]
 
-set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}\nOutput: {output_dir}")
+set_all_seeds(SEED)
 
 # =============================
 # DATA

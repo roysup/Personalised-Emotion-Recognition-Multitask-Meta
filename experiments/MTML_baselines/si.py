@@ -25,9 +25,10 @@ BATCH_SIZE = SI_BATCH_SIZE
 learning_rates = [SI_LR]
 l2_lambdas     = [SI_L2]
 
-set_all_seeds(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}\nOutput: {output_dir}")
+
+set_all_seeds(SEED)
 
 # =============================
 # DATA
@@ -44,7 +45,7 @@ print(f"Train: {train_participants}\nTest:  {test_participants}")
 
 
 def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
-    set_all_seeds(SEED)
+    #set_all_seeds(SEED)
     model   = SingleTaskModel().to(device)
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)

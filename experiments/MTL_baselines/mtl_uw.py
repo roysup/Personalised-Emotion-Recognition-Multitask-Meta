@@ -24,6 +24,8 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
 
+set_all_seeds(SEED)
+
 # =============================
 # DATA
 # =============================

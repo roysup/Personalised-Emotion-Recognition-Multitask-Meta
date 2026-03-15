@@ -23,6 +23,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
 
+set_all_seeds(SEED)
 # =============================
 # DATA
 # =============================
@@ -95,7 +96,7 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
                         train_data[task_idx] = p_df[p_df['Trial'].isin(tr_v)].reset_index(drop=True)
                         val_data[task_idx]   = p_df[p_df['Trial'].isin(va_v)].reset_index(drop=True)
 
-                    set_all_seeds(SEED)
+                    #set_all_seeds(SEED)
                     loader, _, _ = make_mtl_loader(
                         train_data, WINDOW_SIZE, STRIDE,
                         label_type=label_type, batch_size=MTL_BATCH_SIZE, seed=SEED)
