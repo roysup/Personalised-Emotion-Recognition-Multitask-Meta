@@ -26,7 +26,7 @@ import seaborn as sns
 from config import (HARDCODED_SPLITS, SEED, MAX_NORM,
                     TRANSFER_MTL_LR_PT, TRANSFER_MTL_LR_FT,
                     L2_SHARED, L2_TASK, EPOCHS, FT_EPOCHS, FT_BATCH_SIZE,
-                    WINDOW_SIZE, STRIDE, N_FOLDS, TEST_PARTICIPANTS)
+                    WINDOW_SIZE, STRIDE, N_FOLDS, TEST_PARTICIPANTS, RESULTS_DIR)
 from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds,
                    aggregate_mtml_results, compute_per_participant_stds,
                    print_determinism_summary, prefix_results)
@@ -91,7 +91,7 @@ def make_combined_loader(tasks_dict, user_list, label_type, split='train'):
 class MultiTaskModel(nn.Module):
     def __init__(self, num_tasks, hidden=64):
         super().__init__()
-        self.backbone = BaseFeatureExtractor(hidden)
+        self.backbone = BaseFeatureExtractor()
         self.head1 = nn.ModuleList([nn.Sequential(nn.Linear(hidden,128),nn.ReLU()) for _ in range(num_tasks)])
         self.head2 = nn.ModuleList([nn.Sequential(nn.Linear(128,64),nn.ReLU()) for _ in range(num_tasks)])
         self.out   = nn.ModuleList([nn.Linear(64,1) for _ in range(num_tasks)])
