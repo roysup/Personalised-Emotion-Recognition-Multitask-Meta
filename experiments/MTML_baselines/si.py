@@ -15,6 +15,7 @@ import pickle  # still needed for saving results
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
+import torch.nn as nn
 from sklearn.metrics import confusion_matrix, roc_auc_score
 import matplotlib.pyplot as plt
 import seaborn as sns
