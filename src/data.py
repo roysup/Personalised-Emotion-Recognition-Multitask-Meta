@@ -8,16 +8,21 @@ from torch.utils.data import TensorDataset, DataLoader, Sampler
 # SLIDING WINDOW
 # =============================
 
-def create_sliding_windows(data, window_size, stride, task_id=None):
+def create_sliding_windows(data, window_size, stride, task_id=None, trial_col='Trial'):
     """
     Unified sliding-window extractor used by all training scripts.
 
     Parameters
     ----------
-    data        : DataFrame with columns ECG, GSR, AR_Rating, VA_Rating, Trial
+    data        : DataFrame with columns ECG, GSR, AR_Rating, VA_Rating, and trial_col
     window_size : int
     stride      : int
     task_id     : int or None — if provided, included in returned task_ids array
+    trial_col   : str — column to group by when extracting windows.
+                  Use 'Trial' (default) for per-participant scripts where trial
+                  numbers are unique within a participant.
+                  Use 'trial_global' for pooled scripts (e.g. PSTL) where the
+                  same trial number can appear across different participants.
 
     Returns
     -------
@@ -29,8 +34,8 @@ def create_sliding_windows(data, window_size, stride, task_id=None):
     """
     X, y_ar, y_va, task_ids_out, trial_ids_out = [], [], [], [], []
 
-    for trial_id in sorted(data['Trial'].unique()):
-        trial = data[data['Trial'] == trial_id].reset_index(drop=True)
+    for trial_id in sorted(data[trial_col].unique()):
+        trial = data[data[trial_col] == trial_id].reset_index(drop=True)
         original_len = len(trial)
 
         # Pad short trials

@@ -22,6 +22,7 @@ import pandas as pd
 
 from config import HARDCODED_SPLITS, SEED, WINDOW_SIZE, STRIDE, MAX_NORM, EPOCHS
 from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, F1Score, create_kfold_splits, make_kfolds
+from data import create_sliding_windows
 from models import SingleTaskModel
 from dataset_configs.vreed import load_vreed_df
 from paths import RESULTS_DIR
@@ -44,7 +45,8 @@ print(f"Device: {device}\nOutput: {output_dir}")
 # DATA
 # =============================
 df = load_vreed_df(preserve_trial_order=True)
-df['participant_trial_encoded'] = df['ID_video'].astype(str)
+# trial_global (added by load_vreed_df) gives unique per-participant trial keys
+# equivalent to the old participant_trial_encoded / ID_video column
 
 existing_ids = set(df['ID'].unique())
 participant_ids = sorted([int(pid) for pid in hardcoded_splits.keys() if pid in existing_ids])
@@ -54,41 +56,6 @@ test_participants  = [105, 109, 112, 125, 131, 132]
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {train_participants}\nTest:  {test_participants}")
 
-
-# =============================
-# HELPERS
-# =============================
-def get_frames(XY, window_size, stride, label_type='AR'):
-    frames, labels, pte_list = [], [], []
-    for pte in sorted(XY['participant_trial_encoded'].unique()):
-        cur = XY[XY['participant_trial_encoded'] == pte]
-        if cur.empty:
-            continue
-        ecg = cur['ECG'].values
-        gsr = cur['GSR'].values
-        orig_len = len(cur)
-        if orig_len < window_size:
-            pad = window_size - orig_len
-            ecg = np.pad(ecg, (0, pad), constant_values=0)
-            gsr = np.pad(gsr, (0, pad), constant_values=0)
-        combined = np.stack([ecg, gsr], axis=1)
-        T = len(combined)
-        last_i = 0
-        for i in range(0, T - window_size + 1, stride):
-            frames.append(combined[i:i + window_size])
-            labels.append(cur[f'{label_type}_Rating'].iloc[min(i + window_size - 1, orig_len - 1)])
-            pte_list.append(pte)
-            last_i = i
-        next_i = last_i + stride
-        if next_i < T:
-            tail = combined[next_i:]
-            pad = window_size - len(tail)
-            if pad > 0:
-                tail = np.pad(tail, ((0, pad), (0, 0)), constant_values=0)
-            frames.append(tail)
-            labels.append(cur[f'{label_type}_Rating'].iloc[-1])
-            pte_list.append(pte)
-    return np.array(frames), np.array(labels), pte_list
 
 
 def make_loader(X, y, shuffle):
@@ -151,10 +118,12 @@ def hyperparameter_tuning(label_type='AR'):
                           for v in hardcoded_splits[p]['train']]
                 va_pte = [f"{p}_{v}" for p in val_ps if p in hardcoded_splits
                           for v in hardcoded_splits[p]['train']]
-                tr_df = df[df['participant_trial_encoded'].isin(tr_pte)].reset_index(drop=True)
-                va_df = df[df['participant_trial_encoded'].isin(va_pte)].reset_index(drop=True)
-                Xtr, ytr, _ = get_frames(tr_df, WINDOW_SIZE, STRIDE, label_type)
-                Xva, yva, _ = get_frames(va_df, WINDOW_SIZE, STRIDE, label_type)
+                tr_df = df[df['trial_global'].isin(tr_pte)].reset_index(drop=True)
+                va_df = df[df['trial_global'].isin(va_pte)].reset_index(drop=True)
+                Xtr, _ar, _va, _, _ = create_sliding_windows(tr_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
+                ytr = _ar if label_type.upper() == 'AR' else _va
+                Xva, _ar, _va, _, _ = create_sliding_windows(va_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
+                yva = _ar if label_type.upper() == 'AR' else _va
                 if len(Xtr) == 0 or len(Xva) == 0: fold_f1s.append(0.0); continue
                 model = train_model(Xtr, ytr, lr, l2)
                 if model is None: fold_f1s.append(0.0); continue
@@ -183,9 +152,10 @@ def evaluate_per_participant(model, test_participants, test_data, label_type):
     results = []
     for pid in sorted(test_participants):
         test_trials = [f"{pid}_{v}" for v in hardcoded_splits[pid]['test']]
-        p_df = test_data[test_data['participant_trial_encoded'].isin(test_trials)].reset_index(drop=True)
+        p_df = test_data[test_data['trial_global'].isin(test_trials)].reset_index(drop=True)
         if len(p_df) == 0: continue
-        X, y, _ = get_frames(p_df, WINDOW_SIZE, STRIDE, label_type)
+        X, _ar, _va, _, _ = create_sliding_windows(p_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
+        y = _ar if label_type.upper() == 'AR' else _va
         if len(X) == 0: continue
         loader = make_loader(X, y, shuffle=False)
         probs, trues = [], []
@@ -217,19 +187,19 @@ if __name__ == '__main__':
                  for v in hardcoded_splits[p]['train']]
     test_pte  = [f"{p}_{v}" for p in test_participants if p in hardcoded_splits
                  for v in hardcoded_splits[p]['test']]
-    train_data = df[df['participant_trial_encoded'].isin(train_pte)].reset_index(drop=True)
-    test_data  = df[df['participant_trial_encoded'].isin(test_pte)].reset_index(drop=True)
+    train_data = df[df['trial_global'].isin(train_pte)].reset_index(drop=True)
+    test_data  = df[df['trial_global'].isin(test_pte)].reset_index(drop=True)
 
     # Train AR
     print('\n' + '='*60 + '\nTRAINING AR\n' + '='*60)
-    Xtr_ar, ytr_ar, _ = get_frames(train_data, WINDOW_SIZE, STRIDE, 'AR')
+    Xtr_ar, ytr_ar, _, _, _ = create_sliding_windows(train_data, WINDOW_SIZE, STRIDE, trial_col='trial_global')
     set_all_seeds(SEED)
     model_ar = train_model(Xtr_ar, ytr_ar, best_lr_ar, best_l2_ar)
     torch.save(model_ar.state_dict(), os.path.join(output_dir, 'model_ar_si.pth'))
 
     # Train VA
     print('\n' + '='*60 + '\nTRAINING VA\n' + '='*60)
-    Xtr_va, ytr_va, _ = get_frames(train_data, WINDOW_SIZE, STRIDE, 'VA')
+    Xtr_va, _, ytr_va, _, _ = create_sliding_windows(train_data, WINDOW_SIZE, STRIDE, trial_col='trial_global')
     set_all_seeds(SEED)
     model_va = train_model(Xtr_va, ytr_va, best_lr_va, best_l2_va)
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'model_va_si.pth'))

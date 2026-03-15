@@ -50,14 +50,12 @@ _test_set  = {f"{pid}_{vid}" for pid in HARDCODED_SPLITS
 train_df = df[df['participant_trial_encoded'].isin(_train_set)].reset_index(drop=True)
 test_df  = df[df['participant_trial_encoded'].isin(_test_set)].reset_index(drop=True)
 
-train_df = train_df.drop(columns=['Trial']).rename(columns={'participant_trial_encoded': 'Trial'})
-test_df  = test_df.drop(columns=['Trial']).rename(columns={'participant_trial_encoded': 'Trial'})
-
 # =============================
 # HELPERS
 # =============================
 def _make_loader(data_df, label_type, shuffle):
-    X, y_ar, y_va, _, _ = create_sliding_windows(data_df, WINDOW_SIZE, STRIDE)
+    X, y_ar, y_va, _, _ = create_sliding_windows(data_df, WINDOW_SIZE, STRIDE,
+                                                   trial_col='trial_global')
     X = X.astype('float32')
     y = (y_ar if label_type == 'ar' else y_va).astype('float32').reshape(-1, 1)
     ds = TensorDataset(torch.tensor(X), torch.tensor(y))
@@ -114,8 +112,8 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
                     train_ids += [f"{pid}_{v}" for v in tr_v]
                     val_ids   += [f"{pid}_{v}" for v in va_v]
 
-                tr_fold = train_df[train_df['Trial'].isin(train_ids)].reset_index(drop=True)
-                va_fold = train_df[train_df['Trial'].isin(val_ids)].reset_index(drop=True)
+                tr_fold = train_df[train_df['trial_global'].isin(train_ids)].reset_index(drop=True)
+                va_fold = train_df[train_df['trial_global'].isin(val_ids)].reset_index(drop=True)
 
                 if len(tr_fold) == 0 or len(va_fold) == 0:
                     fold_f1s.append(0.0); continue
@@ -191,10 +189,10 @@ if __name__ == '__main__':
     test_loaders_ar, test_loaders_va = {}, {}
     for task_idx, pid in enumerate(participant_ids):
         test_trials = [f"{pid}_{v}" for v in HARDCODED_SPLITS[pid]['test']]
-        p_test = test_df[test_df['Trial'].isin(test_trials)].reset_index(drop=True)
+        p_test = test_df[test_df['trial_global'].isin(test_trials)].reset_index(drop=True)
         if len(p_test):
             X_test, y_ar_test, y_va_test, _, _ = create_sliding_windows(
-                p_test, WINDOW_SIZE, STRIDE)
+                p_test, WINDOW_SIZE, STRIDE)  # Trial is unique within one participant
             X_t = torch.tensor(X_test, dtype=torch.float32)
             test_loaders_ar[task_idx] = DataLoader(
                 TensorDataset(X_t, torch.tensor(y_ar_test, dtype=torch.float32).reshape(-1, 1)),

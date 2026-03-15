@@ -15,7 +15,6 @@ import pickle
 import pandas as pd
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import TensorDataset, DataLoader
@@ -24,6 +23,7 @@ from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
 from config import HARDCODED_SPLITS, SEED, MAX_NORM
 from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfolds
 from data import build_support_query
+from models import SingleTaskModel
 from dataset_configs.vreed import load_vreed_df_mtml
 from paths import RESULTS_DIR
 
@@ -53,31 +53,6 @@ test_participants  = [105, 109, 112, 125, 131, 132]
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
 
-
-# =============================
-# MODEL — single task (no heads)
-# =============================
-class MetaLearner(nn.Module):
-    def __init__(self, hidden=64):
-        super().__init__()
-        self.conv1 = nn.Conv1d(2, 128, 2); self.bn1 = nn.BatchNorm1d(128)
-        self.pool1 = nn.MaxPool1d(2, 2, 1)
-        self.conv2 = nn.Conv1d(128, 64, 1); self.bn2 = nn.BatchNorm1d(64)
-        self.pool2 = nn.MaxPool1d(2, 2)
-        self.lstm  = nn.LSTM(64, hidden, batch_first=True)
-        self.fc1   = nn.Linear(hidden, 128); self.fc2 = nn.Linear(128, 64); self.out = nn.Linear(64, 1)
-        for m in self.modules():
-            if isinstance(m, (nn.Conv1d, nn.Linear)):
-                nn.init.xavier_uniform_(m.weight, gain=nn.init.calculate_gain('relu'))
-                if m.bias is not None: nn.init.zeros_(m.bias)
-
-    def forward(self, x):
-        x = x.permute(0, 2, 1)  # (batch, window, channels) → (batch, channels, window)
-        x = torch.relu(self.bn1(self.conv1(x))); x = self.pool1(x)
-        x = torch.relu(self.bn2(self.conv2(x))); x = self.pool2(x)
-        x = x.permute(0,2,1); out, _ = self.lstm(x)
-        x = torch.mean(out, dim=1)
-        x = torch.relu(self.fc1(x)); x = torch.relu(self.fc2(x)); return self.out(x)
 
 
 # =============================
@@ -148,7 +123,7 @@ def hyperparameter_tuning(label_type='ar'):
                         tr_users = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in tr_ps}
                         val_users = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in val_ps}
                         try:
-                            model = MetaLearner().to(device)
+                            model = SingleTaskModel().to(device)
                             model = reptile_train(model, tr_users, ms, mlr, isp, ilr, L2_LAMBDA, label_type, SEED)
                         except: continue
                         val_f1s = []
@@ -193,14 +168,14 @@ if __name__ == '__main__':
 
     print('\n' + '='*60 + '\nTRAINING FINAL AR\n' + '='*60)
     set_all_seeds(SEED)
-    model_ar = MetaLearner().to(device)
+    model_ar = SingleTaskModel().to(device)
     model_ar = reptile_train(model_ar, train_users_ar, bms_ar, bmlr_ar, bisp_ar, bilr_ar, L2_LAMBDA, 'ar', SEED)
     torch.save(model_ar.state_dict(), os.path.join(output_dir, 'meta_model_ar_final.pth'))
 
     print('\n' + '='*60 + '\nTRAINING FINAL VA\n' + '='*60)
     set_all_seeds(SEED)
     train_users_va = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in train_participants}
-    model_va = MetaLearner().to(device)
+    model_va = SingleTaskModel().to(device)
     model_va = reptile_train(model_va, train_users_va, bms_va, bmlr_va, bisp_va, bilr_va, L2_LAMBDA, 'va', SEED)
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'meta_model_va_final.pth'))
 

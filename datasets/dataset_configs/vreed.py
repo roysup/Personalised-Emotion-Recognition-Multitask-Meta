@@ -54,7 +54,10 @@ def load_vreed_df(preserve_trial_order: bool = False) -> pd.DataFrame:
         for id_trial in unique_id_trials:
             reordered = pd.concat([reordered, df[df['ID_video'] == id_trial]])
         df = reordered.reset_index(drop=True)
-    
+
+    # Global trial key — unique across participants, used by PSTL for pooled windowing
+    df['trial_global'] = df['ID'].astype(str) + '_' + df['Trial'].astype(str)
+
     return df
 
 
