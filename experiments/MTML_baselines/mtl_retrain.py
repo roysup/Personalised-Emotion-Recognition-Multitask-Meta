@@ -216,7 +216,7 @@ if __name__ == '__main__':
     tr_loader_va, _, va_map = make_combined_loader(retrain_tasks, all_users, 'va', 'FINAL-va')
 
     def train_final(loader, lr, label_type, local_map):
-        #set_all_seeds(SEED)
+        set_all_seeds(SEED)
         model = MultiTaskModel(len(local_map)).to(device)
         opt = optim.Adam(model.parameters(), lr=lr)
         sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
