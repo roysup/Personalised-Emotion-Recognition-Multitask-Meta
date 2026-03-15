@@ -28,7 +28,7 @@ from utils import set_all_seeds, compute_metrics_from_cm, safe_roc_auc, make_kfo
 from data import create_sliding_windows, BalancedSamplerMTML
 from dataset_configs.vreed import load_vreed_df
 from models import BaseFeatureExtractor, TaskHead
-from training import adapt_inner_loop, compute_l2_split
+from training import adapt_inner_loop
 from config import RESULTS_DIR
 
 hardcoded_splits = HARDCODED_SPLITS
@@ -104,12 +104,6 @@ class MultiTaskModel(nn.Module):
         return out
 
 
-def compute_l2(model):
-    ls = L2_SHARED * sum(p.norm(2)**2 for p in model.backbone.parameters() if p.requires_grad)
-    lt = L2_TASK * (sum(p.norm(2)**2 for m in model.head1 for p in m.parameters() if p.requires_grad) +
-                    sum(p.norm(2)**2 for m in model.head2 for p in m.parameters() if p.requires_grad) +
-                    sum(p.norm(2)**2 for m in model.out   for p in m.parameters() if p.requires_grad))
-    return ls + lt
 
 
 def add_new_head(model):
@@ -135,7 +129,8 @@ def pretrain_mtl(loader, local_map, lr, label_type):
         for Xb, yb, tids, _ in loader:
             Xb, yb, tids = Xb.to(device), yb.to(device), tids.to(device)
             opt.zero_grad()
-            loss = loss_fn(model(Xb,tids), yb).squeeze(-1).mean() + compute_l2(model)
+            loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean() +
+                     L2_SHARED * sum(p.norm(2)**2 for p in model.backbone.parameters() if p.requires_grad) + L2_TASK * sum(p.norm(2)**2 for mm in (*model.head1, *model.head2, *model.out) for p in mm.parameters() if p.requires_grad))
             if torch.isnan(loss): raise ValueError(f"NaN epoch {ep}")
             loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += loss.item()

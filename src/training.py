@@ -4,8 +4,7 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix
 
-from utils import (compute_metrics_from_cm, safe_roc_auc,
-                   aggregate_results, aggregate_mtml_results)
+from utils import compute_metrics_from_cm, safe_roc_auc
 
 
 # =============================
@@ -355,6 +354,42 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
     return results
 
 
+def aggregate_results(results):
+    """
+    Concatenate per-participant arrays and compute aggregate confusion matrix + metrics.
+
+    Returns
+    -------
+    dict with keys: cm_ar, cm_va, ar_acc/precision/recall/f1, va_*, auc_ar, auc_va,
+                    fpr_ar, tpr_ar, fpr_va, tpr_va
+    """
+    all_true_ar  = np.concatenate([r['y_true_ar']       for r in results])
+    all_pred_ar  = np.concatenate([r['y_pred_ar']       for r in results])
+    all_probs_ar = np.concatenate([r['y_pred_probs_ar'] for r in results])
+    all_true_va  = np.concatenate([r['y_true_va']       for r in results])
+    all_pred_va  = np.concatenate([r['y_pred_va']       for r in results])
+    all_probs_va = np.concatenate([r['y_pred_probs_va'] for r in results])
+
+    cm_ar = confusion_matrix(all_true_ar, all_pred_ar, labels=[0, 1])
+    cm_va = confusion_matrix(all_true_va, all_pred_va, labels=[0, 1])
+
+    ar_acc, ar_prec, ar_rec, ar_f1 = compute_metrics_from_cm(cm_ar)
+    va_acc, va_prec, va_rec, va_f1 = compute_metrics_from_cm(cm_va)
+
+    auc_ar, fpr_ar, tpr_ar = safe_roc_auc(all_true_ar, all_probs_ar)
+    auc_va, fpr_va, tpr_va = safe_roc_auc(all_true_va, all_probs_va)
+
+    return {
+        'cm_ar':        cm_ar,       'cm_va':        cm_va,
+        'ar_acc':       ar_acc,      'va_acc':       va_acc,
+        'ar_precision': ar_prec,     'va_precision': va_prec,
+        'ar_recall':    ar_rec,      'va_recall':    va_rec,
+        'ar_f1':        ar_f1,       'va_f1':        va_f1,
+        'ar_auc':       auc_ar,      'va_auc':       auc_va,
+        'fpr_ar':       fpr_ar,      'tpr_ar':       tpr_ar,
+        'fpr_va':       fpr_va,      'tpr_va':       tpr_va,
+    }
+
 
 # =============================
 # SAVE ALL RESULTS
@@ -364,29 +399,6 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
 # META-LEARNING UTILITIES
 # =============================
 
-def compute_l2_split(shared_params, task_params, l2_shared=0.0, l2_task=1e-5):
-    """
-    Split L2 regularisation: separate lambda for shared backbone vs task head.
-
-    Parameters
-    ----------
-    shared_params : iterable of parameters from the shared backbone
-    task_params   : iterable of parameters from the task-specific head
-    l2_shared     : float — lambda for shared params (typically 0.0)
-    l2_task       : float — lambda for task head params (typically 1e-5)
-
-    Returns
-    -------
-    Scalar tensor on CPU.
-    """
-    reg = torch.tensor(0.0)
-    if l2_shared > 0:
-        for p in shared_params:
-            reg = reg + l2_shared * torch.sum(p ** 2)
-    if l2_task > 0:
-        for p in task_params:
-            reg = reg + l2_task * torch.sum(p ** 2)
-    return reg
 
 
 def adapt_inner_loop(base_model, head, sup_loader, ar_or_va,
@@ -433,7 +445,8 @@ def adapt_inner_loop(base_model, head, sup_loader, ar_or_va,
             Xb, yb = Xb.to(device), yb.to(device)
             opt.zero_grad()
             loss = loss_fn(adapted_head(adapted_base(Xb)), yb)
-            loss = loss + compute_l2_split(sp, tp, l2_shared, l2_task).to(device)
+            loss = loss + (l2_shared * sum(p.norm(2)**2 for p in sp if p.requires_grad) +
+                           l2_task   * sum(p.norm(2)**2 for p in tp if p.requires_grad))
             if not torch.isnan(loss):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(sp + tp, max_norm=1.0)
@@ -637,3 +650,41 @@ def evaluate_mtl_all(model_ar, model_va, test_data_dict,
 # MTML AGGREGATION  (was local aggregate() duplicated in si / pure_meta / reptile_*)
 # =============================
 
+def aggregate_mtml_results(results_ar, results_va):
+    """
+    Concatenate per-participant MTML results and return aggregate metrics for
+    both AR and VA in one call.  Result dicts must have keys:
+    y_true, y_pred, y_pred_probs, (optionally accuracy/precision/recall/f1).
+
+    Returns
+    -------
+    dict with keys mirroring aggregate_results():
+        cm_ar, cm_va,
+        ar_acc, ar_precision, ar_recall, ar_f1, ar_auc, fpr_ar, tpr_ar,
+        va_acc, va_precision, va_recall, va_f1, va_auc, fpr_va, tpr_va,
+        all_true_ar, all_probs_ar, all_true_va, all_probs_va
+    """
+    def _agg_one(results, label):
+        all_true  = np.concatenate([r['y_true']       for r in results])
+        all_pred  = np.concatenate([r['y_pred']        for r in results])
+        all_probs = np.concatenate([r['y_pred_probs']  for r in results])
+        cm = confusion_matrix(all_true, all_pred, labels=[0, 1])
+        acc, prec, rec, f1 = compute_metrics_from_cm(cm)
+        auc_val, fpr, tpr  = safe_roc_auc(all_true, all_probs)
+        print(f"\n{label}: Acc={acc:.4f} F1={f1:.4f} AUC={auc_val:.4f}")
+        return all_true, all_probs, cm, acc, prec, rec, f1, auc_val, fpr, tpr
+
+    all_true_ar, all_probs_ar, cm_AR, ar_acc, ar_prec, ar_rec, ar_f1, ar_auc, ar_fpr, ar_tpr = _agg_one(results_ar, 'AR')
+    all_true_va, all_probs_va, cm_VA, va_acc, va_prec, va_rec, va_f1, va_auc, va_fpr, va_tpr = _agg_one(results_va, 'VA')
+
+    return {
+        'cm_ar': cm_AR,         'cm_va': cm_VA,
+        'ar_acc': ar_acc,       'ar_precision': ar_prec,
+        'ar_recall': ar_rec,    'ar_f1': ar_f1,
+        'ar_auc': ar_auc,       'fpr_ar': ar_fpr,  'tpr_ar': ar_tpr,
+        'va_acc': va_acc,       'va_precision': va_prec,
+        'va_recall': va_rec,    'va_f1': va_f1,
+        'va_auc': va_auc,       'fpr_va': va_fpr,  'tpr_va': va_tpr,
+        'all_true_ar': all_true_ar,   'all_probs_ar': all_probs_ar,
+        'all_true_va': all_true_va,   'all_probs_va': all_probs_va,
+    }
