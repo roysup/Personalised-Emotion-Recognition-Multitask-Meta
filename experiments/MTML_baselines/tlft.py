@@ -9,8 +9,8 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
 import matplotlib.pyplot as plt
 import seaborn as sns
-from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
-                   aggregate_mtml_results, create_kfold_splits, make_kfolds,
+from utils import (set_all_seeds, compute_metrics_from_cm,
+                   aggregate_mtml_results, make_kfolds,
                    compute_per_participant_stds, print_determinism_summary,
                    prefix_results)
 from data import create_sliding_windows, arrays_to_loader

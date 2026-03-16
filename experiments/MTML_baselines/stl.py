@@ -11,7 +11,7 @@ from config import *
 from data import create_sliding_windows, arrays_to_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import SingleTaskModel
-from utils import set_all_seeds, compute_metrics_from_cm, create_kfold_splits, aggregate_results
+from utils import set_all_seeds, create_kfold_splits, aggregate_results
 from training import save_all_results, evaluate_stl_all
 
 BATCH_SIZE = STL_BATCH_SIZE

@@ -6,7 +6,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
-from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
+from utils import (set_all_seeds, compute_metrics_from_cm,
                    aggregate_mtml_results, make_kfolds, compute_per_participant_stds,
                    print_determinism_summary, prefix_results)
 from data import build_support_query

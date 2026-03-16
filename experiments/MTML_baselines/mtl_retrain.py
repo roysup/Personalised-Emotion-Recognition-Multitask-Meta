@@ -26,7 +26,7 @@ from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
                    compute_per_participant_stds, print_determinism_summary,
                    prefix_results)
 from data import create_sliding_windows, BalancedSampler
-from models import MTLRetrainModel
+from models import MTLTransferModel
 from dataset_configs.vreed import load_vreed_df
 
 hardcoded_splits = HARDCODED_SPLITS
@@ -125,7 +125,7 @@ def _eval_fold(model, loader):
 def train_final(loader, lr, label_type, local_map):
     """Train the final model on all participants (train + test) for evaluation."""
     set_all_seeds(SEED)
-    model   = MTLRetrainModel(len(local_map)).to(device)
+    model   = MTLTransferModel(len(local_map)).to(device)
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss(reduction='none')
@@ -185,7 +185,7 @@ def hyperparameter_tuning(label_type='ar'):
             va_loader, _, va_map = make_combined_loader(va_tasks, val_ps, label_type, 'val')
             if not tr_map or not va_map:
                 continue
-            model = MTLRetrainModel(len(tr_map)).to(device)
+            model = MTLTransferModel(len(tr_map)).to(device)
             model = _train_fold(model, tr_loader, lr, EPOCHS)
             if model is None:
                 continue

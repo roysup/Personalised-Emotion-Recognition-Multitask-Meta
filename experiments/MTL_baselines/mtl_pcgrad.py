@@ -34,7 +34,7 @@ df = load_vreed_df()
 # =============================
 # PCGRAD APPLICATION
 # =============================
-def _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids, l2_task):
+def _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids):
     """
     1. Compute per-task losses on shared params only.
     2. Project gradients via PCGrad (imported from training).
@@ -58,11 +58,9 @@ def _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids, l2_task):
                         else torch.zeros_like(p).view(-1))
         task_grads.append(torch.cat(flat))
 
-    projected  = _pcgrad_project(task_grads)   # from training.py
+    projected  = _pcgrad_project(task_grads)
     total_loss = loss_fn(model(X_b, task_ids), y_b).mean()
-    l2_reg     = l2_task * sum(p.norm(2)**2 for p in model.task_specific_parameters()
-                               if p.requires_grad)
-    total = total_loss + l2_reg
+    total      = total_loss + model.compute_l2(L2_SHARED, L2_TASK)
     total.backward()
 
     offset = 0
@@ -78,7 +76,7 @@ def _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids, l2_task):
 # =============================
 # TRAINING
 # =============================
-def _train_pcgrad(label_type, lr_shared, lr_task, l2_task, train_data_dict):
+def _train_pcgrad(label_type, lr_shared, lr_task, train_data_dict):
     loader, _, _ = make_mtl_loader(
         train_data_dict, WINDOW_SIZE, STRIDE,
         label_type=label_type, batch_size=MTL_BATCH_SIZE, seed=SEED)
@@ -99,7 +97,7 @@ def _train_pcgrad(label_type, lr_shared, lr_task, l2_task, train_data_dict):
         for batch in loader:
             X_b, y_b, task_ids, _ = [b.to(device) for b in batch]
             opt.zero_grad(set_to_none=True)
-            total = _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids, l2_task)
+            total = _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids)
 
             if torch.isnan(total):
                 raise ValueError(f"NaN at epoch {epoch+1} [{label_type.upper()}]")
@@ -131,11 +129,11 @@ if __name__ == '__main__':
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
-    model_ar = _train_pcgrad('ar', MTL_SHARED_LR, MTL_TASK_LR, L2_TASK, train_data)
+    model_ar = _train_pcgrad('ar', MTL_SHARED_LR, MTL_TASK_LR, train_data)
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
-    model_va = _train_pcgrad('va', MTL_SHARED_LR, MTL_TASK_LR, L2_TASK, train_data)
+    model_va = _train_pcgrad('va', MTL_SHARED_LR, MTL_TASK_LR, train_data)
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = evaluate_mtl_all(model_ar, model_va, test_data,

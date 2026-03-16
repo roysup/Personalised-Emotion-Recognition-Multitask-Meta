@@ -4,14 +4,15 @@ Model definitions for all training scripts.
 MTL_baselines
 -------------
 SingleTaskModel  — per-participant or population single-task model (pstl.py, stl.py)
-MTLModel         — Hard Parameter Sharing (mtl_hps.py, mtl_pcgrad.py)
+MTLModel         — Hard Parameter Sharing with compute_l2() (mtl_hps.py, mtl_pcgrad.py)
 MTLModelUW       — HPS + learnable log_vars per task (mtl_uw.py)
 
 MTML_baselines
 --------------
 BaseFeatureExtractor  — shared CNN+LSTM backbone (MTML scripts)
 TaskHead              — per-participant dense head (MTML scripts)
-MTLRetrainModel       — HPS backbone + Sequential task heads (mtl_retrain.py, transfer_mtl.py)
+MTLTransferModel      — HPS backbone + Sequential task heads + add_task_head()
+                        (mtl_retrain.py, transfer_mtl.py)
 """
 import torch
 import torch.nn as nn
@@ -127,6 +128,14 @@ class MTLModel(nn.Module):
                 list(self.task_dense2.parameters()) +
                 list(self.task_out.parameters()))
 
+    def compute_l2(self, l2_shared: float = 0.0, l2_task: float = 1e-5) -> torch.Tensor:
+        """Return combined L2 regularisation for shared backbone and task heads."""
+        ls = l2_shared * sum(p.norm(2) ** 2
+                             for p in self.shared_parameters() if p.requires_grad)
+        lt = l2_task   * sum(p.norm(2) ** 2
+                             for p in self.task_specific_parameters() if p.requires_grad)
+        return ls + lt
+
 
 class MTLModelUW(MTLModel):
     """
@@ -194,14 +203,15 @@ class TaskHead(nn.Module):
 # MTML_baselines — retrain / transfer model
 # ============================================================
 
-class MTLRetrainModel(nn.Module):
+class MTLTransferModel(nn.Module):
     """
     Shared BaseFeatureExtractor backbone with per-participant Sequential task heads.
     Used by mtl_retrain.py and transfer_mtl.py.
 
     Compared to MTLModel this uses nn.Sequential heads (activation baked in)
-    and exposes compute_l2() and add_task_head() as methods, removing the need
-    for free-standing compute_l2() / add_new_head() functions in those scripts.
+    and exposes compute_l2() and add_task_head() as methods.
+    add_task_head() enables extending the model to unseen participants at
+    fine-tuning time, which is the distinguishing use-case for both scripts.
 
     Parameters
     ----------

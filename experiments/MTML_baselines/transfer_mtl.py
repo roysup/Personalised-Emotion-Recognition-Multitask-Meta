@@ -30,7 +30,7 @@ from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
                    compute_per_participant_stds, print_determinism_summary,
                    prefix_results)
 from data import create_sliding_windows, BalancedSampler
-from models import MTLRetrainModel
+from models import MTLTransferModel
 from dataset_configs.vreed import load_vreed_df
 
 hardcoded_splits = HARDCODED_SPLITS
@@ -95,7 +95,7 @@ def make_combined_loader(tasks_dict, user_list, label_type, split='train'):
 # TRAINING HELPERS
 # =============================
 def pretrain_mtl(loader, local_map, lr, label_type):
-    model   = MTLRetrainModel(len(local_map)).to(device)
+    model   = MTLTransferModel(len(local_map)).to(device)
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss(reduction='none')

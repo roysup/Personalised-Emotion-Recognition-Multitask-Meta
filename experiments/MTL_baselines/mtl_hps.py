@@ -30,13 +30,9 @@ set_all_seeds(SEED)
 df = load_vreed_df()
 
 # =============================
-# HELPERS
+# TRAINING
 # =============================
-def _l2_task_only(model):
-    return L2_TASK * sum(p.norm(2)**2 for p in model.task_specific_parameters()
-                         if p.requires_grad)
-
-def _train_mtl(label_type, lr_shared, lr_task, l2_fn, train_data_dict):
+def _train_mtl(label_type, lr_shared, lr_task, train_data_dict):
     loader, _, _ = make_mtl_loader(
         train_data_dict, WINDOW_SIZE, STRIDE,
         label_type=label_type, batch_size=MTL_BATCH_SIZE, seed=SEED)
@@ -58,7 +54,7 @@ def _train_mtl(label_type, lr_shared, lr_task, l2_fn, train_data_dict):
             X_b, y_b, task_ids, _ = [b.to(device) for b in batch]
             opt.zero_grad()
             loss  = loss_fn(model(X_b, task_ids), y_b).mean()
-            total = loss + l2_fn(model)
+            total = loss + model.compute_l2(L2_SHARED, L2_TASK)
             if torch.isnan(total):
                 raise ValueError(f"NaN at epoch {epoch+1} [{label_type.upper()}]")
             total.backward()
@@ -96,7 +92,6 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
                         train_data[task_idx] = p_df[p_df['Trial'].isin(tr_v)].reset_index(drop=True)
                         val_data[task_idx]   = p_df[p_df['Trial'].isin(va_v)].reset_index(drop=True)
 
-                    #set_all_seeds(SEED)
                     loader, _, _ = make_mtl_loader(
                         train_data, WINDOW_SIZE, STRIDE,
                         label_type=label_type, batch_size=MTL_BATCH_SIZE, seed=SEED)
@@ -115,10 +110,8 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
                         for batch in loader:
                             X_b, y_b, tids, _ = [b.to(device) for b in batch]
                             opt.zero_grad()
-                            total = (loss_fn(model(X_b, tids), y_b).mean() +
-                                     l2 * sum(p.norm(2)**2
-                                              for p in model.task_specific_parameters()
-                                              if p.requires_grad))
+                            total = (loss_fn(model(X_b, tids), y_b).mean()
+                                     + model.compute_l2(L2_SHARED, l2))
                             total.backward()
                             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
                             opt.step(); run += total.item()
@@ -175,11 +168,11 @@ if __name__ == '__main__':
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
-    model_ar = _train_mtl('ar', best_sh_ar, best_tk_ar, _l2_task_only, train_data)
+    model_ar = _train_mtl('ar', best_sh_ar, best_tk_ar, train_data)
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
-    model_va = _train_mtl('va', best_sh_va, best_tk_va, _l2_task_only, train_data)
+    model_va = _train_mtl('va', best_sh_va, best_tk_va, train_data)
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = evaluate_mtl_all(model_ar, model_va, test_data,

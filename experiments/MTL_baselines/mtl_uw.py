@@ -15,7 +15,7 @@ from models import MTLModelUW
 from utils import set_all_seeds, compute_metrics_from_cm, aggregate_results
 from training import save_all_results, evaluate_mtl_all
 
-NUM_TASKS  = len(participant_ids)
+NUM_TASKS   = len(participant_ids)
 LOG_VAR_LR  = {'ar': 4e-3, 'va': 1e-3}
 
 OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_uw_results')
@@ -34,7 +34,7 @@ df = load_vreed_df()
 # =============================
 # TRAINING
 # =============================
-def _train_uw(label_type, lr_shared, lr_task, lr_logvar, l2_task, train_data_dict):
+def _train_uw(label_type, lr_shared, lr_task, lr_logvar, train_data_dict):
     loader, _, _ = make_mtl_loader(
         train_data_dict, WINDOW_SIZE, STRIDE,
         label_type=label_type, batch_size=MTL_BATCH_SIZE, seed=SEED)
@@ -65,10 +65,7 @@ def _train_uw(label_type, lr_shared, lr_task, lr_logvar, l2_task, train_data_dic
             log_vars        = model.log_vars[task_ids]
             precision       = torch.exp(-log_vars)
             weighted_loss   = (precision * per_sample_loss + log_vars).mean()
-            l2_reg          = l2_task * sum(p.norm(2)**2
-                                            for p in model.task_specific_parameters()
-                                            if p.requires_grad)
-            total = weighted_loss + l2_reg
+            total           = weighted_loss + model.compute_l2(L2_SHARED, L2_TASK)
 
             if torch.isnan(total):
                 raise ValueError(f"NaN at epoch {epoch+1} [{label_type.upper()}]")
@@ -102,11 +99,11 @@ if __name__ == '__main__':
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
-    model_ar = _train_uw('ar', MTL_SHARED_LR, MTL_TASK_LR, LOG_VAR_LR['ar'], L2_TASK, train_data)
+    model_ar = _train_uw('ar', MTL_SHARED_LR, MTL_TASK_LR, LOG_VAR_LR['ar'], train_data)
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
-    model_va = _train_uw('va', MTL_SHARED_LR, MTL_TASK_LR, LOG_VAR_LR['va'], L2_TASK, train_data)
+    model_va = _train_uw('va', MTL_SHARED_LR, MTL_TASK_LR, LOG_VAR_LR['va'], train_data)
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = evaluate_mtl_all(model_ar, model_va, test_data,
