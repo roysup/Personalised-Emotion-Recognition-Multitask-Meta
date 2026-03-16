@@ -23,7 +23,7 @@ os.makedirs(output_dir, exist_ok=True)
 
 learning_rates_pre = [TF_LR_PRE]
 learning_rates_ft  = [TF_LR_FT]
-l2_lambdas     = [TF_L2]
+l2_lambdas         = [L2_TASK]     # was TF_L2 = 1e-5 (duplicate of L2_TASK)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}\nOutput: {output_dir}")
@@ -48,18 +48,12 @@ print(f"Train: {train_participants}\nTest:  {test_participants}")
 # HELPERS
 # =============================
 def _get_windows(sub_df, label_type):
-    """
-    Extract sliding windows from a sub-DataFrame grouped by participant_trial_encoded.
-    Replaces the local get_frames() helper; delegates to the shared create_sliding_windows.
-    Returns (X, y) numpy arrays.
-    """
     X, y_ar, y_va, _, _ = create_sliding_windows(
         sub_df, WINDOW_SIZE, STRIDE, trial_col='participant_trial_encoded')
     return X, (y_ar if label_type.upper() == 'AR' else y_va)
 
 
 def pretrain(X, y, lr, l2_lambda, epochs):
-    #set_all_seeds(SEED)
     model   = SingleTaskModel().to(device)
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
@@ -73,7 +67,8 @@ def pretrain(X, y, lr, l2_lambda, epochs):
             loss  = loss_fn(model(X_b), y_b)
             l2    = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
             total = loss + l2
-            if torch.isnan(total): return None
+            if torch.isnan(total):
+                return None
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += total.item()
@@ -96,7 +91,8 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
             loss  = loss_fn(model(X_b), y_b)
             l2    = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
             total = loss + l2
-            if torch.isnan(total): return None
+            if torch.isnan(total):
+                return None
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += total.item()
@@ -127,7 +123,7 @@ def eval_model(model, X, y):
 def hyperparameter_tuning(label_type='AR'):
     print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type}] TL-FT\n{'='*60}")
     results     = []
-    train_folds = make_kfolds(train_participants, seed=SEED)  # replaces local create_participant_kfolds
+    train_folds = make_kfolds(train_participants, seed=SEED)
     for lr_pre in learning_rates_pre:
         for lr_ft in learning_rates_ft:
             for l2 in l2_lambdas:
@@ -139,33 +135,40 @@ def hyperparameter_tuning(label_type='AR'):
                               for v in hardcoded_splits[p]['train']]
                     tr_df  = df[df['participant_trial_encoded'].isin(tr_pte)].reset_index(drop=True)
                     Xpre, ypre = _get_windows(tr_df, label_type)
-                    if len(Xpre) == 0: continue
+                    if len(Xpre) == 0:
+                        continue
                     base = pretrain(Xpre, ypre, lr_pre, l2, EPOCHS)
-                    if base is None: continue
+                    if base is None:
+                        continue
                     val_f1s = []
                     for pid in val_ps:
-                        if pid not in hardcoded_splits: continue
+                        if pid not in hardcoded_splits:
+                            continue
                         tr_pte_u = [f"{pid}_{v}" for v in hardcoded_splits[pid]['train']]
                         te_pte_u = [f"{pid}_{v}" for v in hardcoded_splits[pid]['test']]
                         u_tr = df[df['participant_trial_encoded'].isin(tr_pte_u)].reset_index(drop=True)
                         u_te = df[df['participant_trial_encoded'].isin(te_pte_u)].reset_index(drop=True)
                         Xft, yft = _get_windows(u_tr, label_type)
                         Xte, yte = _get_windows(u_te, label_type)
-                        if len(Xft) == 0 or len(Xte) == 0: continue
+                        if len(Xft) == 0 or len(Xte) == 0:
+                            continue
                         ft = finetune(base, Xft, yft, lr_ft, l2, FT_EPOCHS, pid)
-                        if ft is None: continue
+                        if ft is None:
+                            continue
                         r = eval_model(ft, Xte, yte)
                         val_f1s.append(f1_score(r['y_true'], r['y_pred'],
                                                 average='macro', zero_division=0))
                     if val_f1s:
                         fold_f1s.append(np.mean(val_f1s))
                         print(f"  fold {fold_i+1}: f1={fold_f1s[-1]:.4f}")
-                if not fold_f1s: continue
+                if not fold_f1s:
+                    continue
                 avg = np.mean(fold_f1s)
                 results.append({'lr_pre': lr_pre, 'lr_ft': lr_ft, 'l2': l2,
                                  'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
                 print(f"  avg f1={avg:.4f}")
-    if not results: return 1e-3, 1e-3, 0.0
+    if not results:
+        return 1e-3, 1e-3, 0.0
     best = max(results, key=lambda x: x['avg_f1'])
     with open(os.path.join(output_dir, f'{label_type.lower()}_tuning_results_tlft.pkl'), 'wb') as f:
         pickle.dump({'all': results, 'best': best}, f)
@@ -197,7 +200,8 @@ if __name__ == '__main__':
 
     results_ar, results_va = [], []
     for pid in sorted(test_participants):
-        if pid not in hardcoded_splits: continue
+        if pid not in hardcoded_splits:
+            continue
         tr_pte_u = [f"{pid}_{v}" for v in hardcoded_splits[pid]['train']]
         te_pte_u = [f"{pid}_{v}" for v in hardcoded_splits[pid]['test']]
         u_tr = df[df['participant_trial_encoded'].isin(tr_pte_u)].reset_index(drop=True)
@@ -220,7 +224,6 @@ if __name__ == '__main__':
 
     agg = aggregate_mtml_results(results_ar, results_va)
 
-    # CM plots
     for cm, label, fname in [(agg['cm_ar'], 'AR', 'ar_cm_tlft.png'),
                               (agg['cm_va'], 'VA', 'va_cm_tlft.png')]:
         plt.figure(figsize=(6, 5))
@@ -246,8 +249,8 @@ if __name__ == '__main__':
         'best_hyperparameters': {
             'AR': {'lr_pre': best_lr_pre_ar, 'lr_ft': best_lr_ft_ar, 'l2': best_l2_ar},
             'VA': {'lr_pre': best_lr_pre_va, 'lr_ft': best_lr_ft_va, 'l2': best_l2_va}},
-        **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
-        **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
+        **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc', 'precision', 'recall', 'f1', 'auc']},
+        **{f'va_{k}': agg[f'va_{k}'] for k in ['acc', 'precision', 'recall', 'f1', 'auc']},
         'test_results_per_participant_ar': results_ar,
         'test_results_per_participant_va': results_va,
         'cm_ar': agg['cm_ar'], 'cm_va': agg['cm_va'],
@@ -256,8 +259,8 @@ if __name__ == '__main__':
         pickle.dump(final_results, f)
 
     print_determinism_summary(
-        {f'ar_{k}': final_results[f'ar_{k}'] for k in ['auc','acc','precision','recall','f1']},
-        {f'va_{k}': final_results[f'va_{k}'] for k in ['auc','acc','precision','recall','f1']},
+        {f'ar_{k}': final_results[f'ar_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
+        {f'va_{k}': final_results[f'va_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")

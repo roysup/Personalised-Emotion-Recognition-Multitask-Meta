@@ -3,15 +3,15 @@ Model definitions for all training scripts.
 
 MTL_baselines
 -------------
-PSTLModel      — population single-task model (used by pstl.py)
-STLModel       — per-participant single-task model (used by stl.py)
-MTLModel       — Hard Parameter Sharing (used by mtl_hps.py and mtl_pcgrad.py)
-MTLModelUW     — HPS + learnable log_vars per task (used by mtl_uw.py)
+SingleTaskModel  — per-participant or population single-task model (pstl.py, stl.py)
+MTLModel         — Hard Parameter Sharing (mtl_hps.py, mtl_pcgrad.py)
+MTLModelUW       — HPS + learnable log_vars per task (mtl_uw.py)
 
 MTML_baselines
 --------------
-BaseFeatureExtractor  — shared CNN+LSTM backbone (used by MTML scripts)
-TaskHead              — per-participant dense head (used by MTML scripts)
+BaseFeatureExtractor  — shared CNN+LSTM backbone (MTML scripts)
+TaskHead              — per-participant dense head (MTML scripts)
+MTLRetrainModel       — HPS backbone + Sequential task heads (mtl_retrain.py, transfer_mtl.py)
 """
 import torch
 import torch.nn as nn
@@ -143,7 +143,7 @@ class MTLModelUW(MTLModel):
 
 
 # ============================================================
-# MTML_baselines
+# MTML_baselines — backbone + head
 # ============================================================
 
 class BaseFeatureExtractor(nn.Module):
@@ -188,3 +188,79 @@ class TaskHead(nn.Module):
         x = F.relu(self.dense1(x))
         x = F.relu(self.dense2(x))
         return self.out(x)
+
+
+# ============================================================
+# MTML_baselines — retrain / transfer model
+# ============================================================
+
+class MTLRetrainModel(nn.Module):
+    """
+    Shared BaseFeatureExtractor backbone with per-participant Sequential task heads.
+    Used by mtl_retrain.py and transfer_mtl.py.
+
+    Compared to MTLModel this uses nn.Sequential heads (activation baked in)
+    and exposes compute_l2() and add_task_head() as methods, removing the need
+    for free-standing compute_l2() / add_new_head() functions in those scripts.
+
+    Parameters
+    ----------
+    num_tasks : int — number of participants at construction time
+    hidden    : int — backbone output width (default 64)
+    """
+    def __init__(self, num_tasks: int, hidden: int = 64):
+        super().__init__()
+        self.backbone  = BaseFeatureExtractor()
+        self.head1     = nn.ModuleList(
+            [nn.Sequential(nn.Linear(hidden, 128), nn.ReLU()) for _ in range(num_tasks)])
+        self.head2     = nn.ModuleList(
+            [nn.Sequential(nn.Linear(128, 64), nn.ReLU()) for _ in range(num_tasks)])
+        self.out       = nn.ModuleList(
+            [nn.Linear(64, 1) for _ in range(num_tasks)])
+        self.num_tasks = num_tasks
+        self.apply(_xavier_init)
+
+    def forward(self, x, task_ids):
+        feats = self.backbone(x)
+        out   = torch.zeros(feats.size(0), 1, device=x.device)
+        for t in torch.unique(task_ids):
+            mask = (task_ids == t)
+            ti   = int(t.item())
+            if ti < 0 or ti >= self.num_tasks or feats[mask].size(0) == 0:
+                continue
+            h = self.head1[ti](feats[mask])
+            h = self.head2[ti](h)
+            out[mask] = self.out[ti](h)
+        return out
+
+    def backbone_parameters(self):
+        return list(self.backbone.parameters())
+
+    def task_specific_parameters(self):
+        return (list(self.head1.parameters()) +
+                list(self.head2.parameters()) +
+                list(self.out.parameters()))
+
+    def compute_l2(self, l2_shared: float = 0.0, l2_task: float = 1e-5) -> torch.Tensor:
+        """Return the combined L2 regularisation term for backbone and task heads."""
+        ls = l2_shared * sum(p.norm(2) ** 2
+                             for p in self.backbone_parameters() if p.requires_grad)
+        lt = l2_task   * sum(p.norm(2) ** 2
+                             for p in self.task_specific_parameters() if p.requires_grad)
+        return ls + lt
+
+    def add_task_head(self) -> int:
+        """
+        Append a new task head for a previously unseen participant.
+        Used by transfer_mtl.py during per-test-participant fine-tuning.
+
+        Returns
+        -------
+        int — the local task index of the new head
+        """
+        device = next(self.parameters()).device
+        self.head1.append(nn.Sequential(nn.Linear(64, 128), nn.ReLU()).to(device))
+        self.head2.append(nn.Sequential(nn.Linear(128, 64), nn.ReLU()).to(device))
+        self.out.append(nn.Linear(64, 1).to(device))
+        self.num_tasks += 1
+        return self.num_tasks - 1   # index of the newly added head

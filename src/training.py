@@ -26,9 +26,8 @@ def _pcgrad_project(grad_list):
     return torch.mean(torch.stack(grads), dim=0)
 
 
-
 # =============================
-# EVALUATION
+# EVALUATION — P-STL (DataLoader-based)
 # =============================
 
 def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
@@ -38,14 +37,14 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
 
     Parameters
     ----------
-    model            : nn.Module (for STL pass a dict {task_idx: (model_ar, model_va)})
+    model            : nn.Module (for STL pass a 2-tuple (model_ar, model_va))
     test_loaders_ar  : dict {task_idx: DataLoader}
     test_loaders_va  : dict {task_idx: DataLoader}
     participant_ids  : list of participant IDs indexed by task_idx
     device           : torch.device
     is_mtl           : bool — if True, model(X, task_ids) is called;
                        if False, model(X) is called.
-                       For STL pass is_mtl=False and model as a 2-tuple (model_ar, model_va).
+                       For P-STL pass is_mtl=False and model as a 2-tuple (model_ar, model_va).
 
     Returns
     -------
@@ -55,13 +54,11 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
 
     # Normalise model argument
     if isinstance(model, tuple):
-        # STL: (model_ar, model_va)
         model_ar, model_va = model
         model_ar.eval()
         model_va.eval()
         use_pair = True
     elif isinstance(model, dict):
-        # STL per-participant models: {task_idx: (model_ar, model_va)}
         use_pair = False
         use_dict = True
     else:
@@ -76,7 +73,6 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
             if loader_ar is None or loader_va is None:
                 continue
 
-            # Resolve models
             if use_pair:
                 m_ar, m_va = model_ar, model_va
             elif use_dict:
@@ -154,10 +150,83 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
     return results
 
 
+# =============================
+# EVALUATION — STL (per-participant models, raw DataFrames)
+# =============================
+
+def evaluate_stl_all(models_ar, models_va, test_data_dict,
+                     participant_ids, device,
+                     window_size=2560, stride=1280):
+    """
+    Evaluate per-participant STL models over raw test DataFrames.
+
+    Mirrors evaluate_mtl_all() but accepts per-participant model dicts rather
+    than a single shared model.  Moved here from stl.py's local _evaluate_participant.
+
+    Parameters
+    ----------
+    models_ar / models_va : dict {task_idx: nn.Module}
+    test_data_dict        : dict {task_idx: DataFrame}
+    participant_ids       : list of participant IDs indexed by task_idx
+    device                : torch.device
+    window_size / stride  : windowing parameters
+
+    Returns
+    -------
+    list of per-participant result dicts compatible with aggregate_results()
+    and save_all_results().
+    """
+    from data import create_sliding_windows
+
+    results = []
+    for task_idx, pid in enumerate(participant_ids):
+        if task_idx not in models_ar or task_idx not in models_va:
+            continue
+        test_df = test_data_dict.get(task_idx)
+        if test_df is None or len(test_df) == 0:
+            continue
+        X, y_ar, y_va, _, _ = create_sliding_windows(
+            test_df, window_size, stride, task_id=task_idx)
+        if len(X) == 0:
+            continue
+
+        X_t  = torch.tensor(X, dtype=torch.float32).to(device)
+        m_ar = models_ar[task_idx]; m_ar.eval()
+        m_va = models_va[task_idx]; m_va.eval()
+
+        with torch.no_grad():
+            prob_ar = torch.sigmoid(m_ar(X_t)).cpu().numpy().flatten()
+            prob_va = torch.sigmoid(m_va(X_t)).cpu().numpy().flatten()
+
+        pred_ar = (prob_ar > 0.5).astype(int); y_ar_i = y_ar.astype(int)
+        pred_va = (prob_va > 0.5).astype(int); y_va_i = y_va.astype(int)
+
+        cm_ar = confusion_matrix(y_ar_i, pred_ar, labels=[0, 1])
+        cm_va = confusion_matrix(y_va_i, pred_va, labels=[0, 1])
+        ar_acc, ar_prec, ar_rec, ar_f1 = compute_metrics_from_cm(cm_ar)
+        va_acc, va_prec, va_rec, va_f1 = compute_metrics_from_cm(cm_va)
+
+        print(f"  Participant {pid}: AR acc={ar_acc:.4f} f1={ar_f1:.4f} | "
+              f"VA acc={va_acc:.4f} f1={va_f1:.4f}")
+
+        results.append({
+            'task_idx':        task_idx, 'participant_id':  pid,
+            'cm_ar':           cm_ar,    'cm_va':           cm_va,
+            'ar_acc':          ar_acc,   'ar_precision':    ar_prec,
+            'ar_recall':       ar_rec,   'ar_f1':           ar_f1,
+            'va_acc':          va_acc,   'va_precision':    va_prec,
+            'va_recall':       va_rec,   'va_f1':           va_f1,
+            'y_true_ar':       y_ar_i,   'y_pred_ar':       pred_ar,
+            'y_pred_probs_ar': prob_ar,
+            'y_true_va':       y_va_i,   'y_pred_va':       pred_va,
+            'y_pred_probs_va': prob_va,
+        })
+    return results
 
 
-
-
+# =============================
+# INNER-LOOP ADAPTATION  (Reptile / MAML style)
+# =============================
 
 def adapt_inner_loop(base_model, head, sup_loader, ar_or_va,
                      inner_steps, inner_lr, device,
@@ -172,17 +241,16 @@ def adapt_inner_loop(base_model, head, sup_loader, ar_or_va,
     base_model  : BaseFeatureExtractor — shared backbone
     head        : TaskHead — participant-specific head
     sup_loader  : DataLoader yielding (X, y) support batches
-    ar_or_va    : 'ar' or 'va' — selects which label was loaded
-    inner_steps : int — number of gradient steps
-    inner_lr    : float — inner-loop learning rate
+    ar_or_va    : 'ar' or 'va'
+    inner_steps : int
+    inner_lr    : float
     device      : torch.device
     l2_shared   : float — L2 lambda for backbone params
     l2_task     : float — L2 lambda for head params
 
     Returns
     -------
-    adapted_base : deep copy of backbone after adaptation
-    adapted_head : deep copy of head after adaptation
+    adapted_base, adapted_head
     """
     import copy
     from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -193,7 +261,7 @@ def adapt_inner_loop(base_model, head, sup_loader, ar_or_va,
 
     sp = list(adapted_base.parameters())
     tp = list(adapted_head.parameters())
-    opt = torch.optim.Adam(sp + tp, lr=inner_lr)
+    opt   = torch.optim.Adam(sp + tp, lr=inner_lr)
     sched = ReduceLROnPlateau(opt, mode='min', factor=0.1, patience=3)
     loss_fn = nn.BCEWithLogitsLoss()
 
@@ -221,21 +289,6 @@ def evaluate_test_user(base_model, head, test_df, splits, uid, ar_or_va,
                        l2_shared=0.0, l2_task=1e-5):
     """
     Adapt the meta-learned backbone to one test participant and evaluate.
-    Imports build_support_query from data at call time to avoid circular imports.
-
-    Parameters
-    ----------
-    base_model  : BaseFeatureExtractor
-    head        : TaskHead (freshly initialised)
-    test_df     : DataFrame for this participant
-    splits      : dict — hardcoded_splits with 'train'/'test' trial lists
-    uid         : int — participant ID
-    ar_or_va    : 'ar' or 'va'
-    device      : torch.device
-    inner_steps : int
-    inner_lr    : float
-    l2_shared   : float
-    l2_task     : float
 
     Returns
     -------
@@ -245,10 +298,7 @@ def evaluate_test_user(base_model, head, test_df, splits, uid, ar_or_va,
     from data import build_support_query
 
     sup_loader, q_loader = build_support_query(
-        test_df,
-        splits[uid]['train'],
-        splits[uid]['test'],
-        ar_or_va)
+        test_df, splits[uid]['train'], splits[uid]['test'], ar_or_va)
 
     if len(q_loader.dataset) == 0:
         return None
@@ -277,7 +327,7 @@ def evaluate_test_user(base_model, head, test_df, splits, uid, ar_or_va,
 
 
 # =============================
-# MTL EVALUATION  (was _evaluate_all duplicated in mtl_hps / mtl_pcgrad / mtl_uw)
+# MTL EVALUATION  (shared model, raw DataFrames)
 # =============================
 
 def evaluate_mtl_all(model_ar, model_va, test_data_dict,
@@ -288,16 +338,15 @@ def evaluate_mtl_all(model_ar, model_va, test_data_dict,
 
     Parameters
     ----------
-    model_ar / model_va : MTLModel (or MTLModelUW) — AR and VA models
+    model_ar / model_va : MTLModel (or MTLModelUW)
     test_data_dict      : dict {task_idx: DataFrame}
     participant_ids     : list of participant IDs indexed by task_idx
     device              : torch.device
-    window_size / stride: windowing parameters (default VREED values)
+    window_size / stride: windowing parameters
 
     Returns
     -------
-    list of per-participant result dicts compatible with aggregate_results()
-    and save_all_results().
+    list of per-participant result dicts compatible with aggregate_results().
     """
     from data import create_sliding_windows
 
@@ -355,19 +404,15 @@ def save_all_results(results, agg, output_dir, method_name, misclassification_cs
     ----------
     results              : list of per-participant result dicts
     agg                  : dict returned by aggregate_results()
-    output_dir           : str — directory to write all files into
+    output_dir           : str
     method_name          : str — used in plot titles, e.g. 'MTL-HPS'
-    misclassification_csv: str — filename only (not full path), e.g.
-                           'VREED_hps_misclassification_rates.csv'
+    misclassification_csv: str — filename only (not full path)
 
     Writes
     ------
-    per_participant_results.csv
-    <misclassification_csv>
-    ar_cm.png, va_cm.png
-    ar_roc.png, va_roc.png
-    (pickle saving is left to the caller because the pkl filename and any
-     extra keys vary per script)
+    per_participant_results.csv, <misclassification_csv>,
+    ar_cm.png, va_cm.png, ar_roc.png, va_roc.png
+    (pickle saving is left to the caller — pkl filename and extra keys vary per script)
     """
     import os
     from utils import (save_misclassification_rates, build_results_table,

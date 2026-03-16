@@ -21,9 +21,9 @@ BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_SI')
 os.makedirs(output_dir, exist_ok=True)
 
-BATCH_SIZE = SI_BATCH_SIZE
-learning_rates = [SI_LR]
-l2_lambdas     = [SI_L2]
+BATCH_SIZE     = SI_BATCH_SIZE
+learning_rates = [MTL_SHARED_LR]   # was SI_LR = 3e-4 (duplicate of MTL_SHARED_LR)
+l2_lambdas     = [L2_TASK]         # was SI_L2 = 1e-5 (duplicate of L2_TASK)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}\nOutput: {output_dir}")
@@ -45,7 +45,6 @@ print(f"Train: {train_participants}\nTest:  {test_participants}")
 
 
 def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
-    #set_all_seeds(SEED)
     model   = SingleTaskModel().to(device)
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
@@ -60,7 +59,8 @@ def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
             loss  = loss_fn(model(X_b), y_b).mean()
             l2    = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
             total = loss + l2
-            if torch.isnan(total): return None
+            if torch.isnan(total):
+                return None
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += total.item()
@@ -73,8 +73,8 @@ def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
 # =============================
 def hyperparameter_tuning(label_type='AR'):
     print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type}] SI\n{'='*60}")
-    results      = []
-    train_folds  = make_kfolds(train_participants, seed=SEED)   # replaces local create_participant_kfolds
+    results     = []
+    train_folds = make_kfolds(train_participants, seed=SEED)
     for lr in learning_rates:
         for l2 in l2_lambdas:
             fold_f1s = []
@@ -87,13 +87,17 @@ def hyperparameter_tuning(label_type='AR'):
                           for v in hardcoded_splits[p]['train']]
                 tr_df = df[df['trial_global'].isin(tr_pte)].reset_index(drop=True)
                 va_df = df[df['trial_global'].isin(va_pte)].reset_index(drop=True)
-                Xtr, _ar, _va, _, _ = create_sliding_windows(tr_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
+                Xtr, _ar, _va, _, _ = create_sliding_windows(
+                    tr_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
                 ytr = _ar if label_type.upper() == 'AR' else _va
-                Xva, _ar, _va, _, _ = create_sliding_windows(va_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
+                Xva, _ar, _va, _, _ = create_sliding_windows(
+                    va_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
                 yva = _ar if label_type.upper() == 'AR' else _va
-                if len(Xtr) == 0 or len(Xva) == 0: fold_f1s.append(0.0); continue
+                if len(Xtr) == 0 or len(Xva) == 0:
+                    fold_f1s.append(0.0); continue
                 model = train_model(Xtr, ytr, lr, l2)
-                if model is None: fold_f1s.append(0.0); continue
+                if model is None:
+                    fold_f1s.append(0.0); continue
                 model.eval()
                 f1m    = F1Score()
                 loader = arrays_to_loader(Xva, yva, BATCH_SIZE, shuffle=False)
@@ -120,10 +124,13 @@ def evaluate_per_participant(model, test_participants, test_data, label_type):
     for pid in sorted(test_participants):
         test_trials = [f"{pid}_{v}" for v in hardcoded_splits[pid]['test']]
         p_df = test_data[test_data['trial_global'].isin(test_trials)].reset_index(drop=True)
-        if len(p_df) == 0: continue
-        X, _ar, _va, _, _ = create_sliding_windows(p_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
+        if len(p_df) == 0:
+            continue
+        X, _ar, _va, _, _ = create_sliding_windows(
+            p_df, WINDOW_SIZE, STRIDE, trial_col='trial_global')
         y = _ar if label_type.upper() == 'AR' else _va
-        if len(X) == 0: continue
+        if len(X) == 0:
+            continue
         loader = arrays_to_loader(X, y, BATCH_SIZE, shuffle=False)
         probs, trues = [], []
         with torch.no_grad():
@@ -157,13 +164,15 @@ if __name__ == '__main__':
     test_data  = df[df['trial_global'].isin(test_pte)].reset_index(drop=True)
 
     print('\n' + '='*60 + '\nTRAINING AR\n' + '='*60)
-    Xtr_ar, ytr_ar, _, _, _ = create_sliding_windows(train_data, WINDOW_SIZE, STRIDE, trial_col='trial_global')
+    Xtr_ar, ytr_ar, _, _, _ = create_sliding_windows(
+        train_data, WINDOW_SIZE, STRIDE, trial_col='trial_global')
     set_all_seeds(SEED)
     model_ar = train_model(Xtr_ar, ytr_ar, best_lr_ar, best_l2_ar)
     torch.save(model_ar.state_dict(), os.path.join(output_dir, 'model_ar_si.pth'))
 
     print('\n' + '='*60 + '\nTRAINING VA\n' + '='*60)
-    Xtr_va, _, ytr_va, _, _ = create_sliding_windows(train_data, WINDOW_SIZE, STRIDE, trial_col='trial_global')
+    Xtr_va, _, ytr_va, _, _ = create_sliding_windows(
+        train_data, WINDOW_SIZE, STRIDE, trial_col='trial_global')
     set_all_seeds(SEED)
     model_va = train_model(Xtr_va, ytr_va, best_lr_va, best_l2_va)
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'model_va_si.pth'))
@@ -200,8 +209,8 @@ if __name__ == '__main__':
         'test_participants':  test_participants,
         'best_hyperparameters': {'AR': {'lr': best_lr_ar, 'l2': best_l2_ar},
                                  'VA': {'lr': best_lr_va, 'l2': best_l2_va}},
-        **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
-        **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
+        **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc', 'precision', 'recall', 'f1', 'auc']},
+        **{f'va_{k}': agg[f'va_{k}'] for k in ['acc', 'precision', 'recall', 'f1', 'auc']},
         **{f'ar_{k}_std': v for k, v in ar_stds.items()},
         **{f'va_{k}_std': v for k, v in va_stds.items()},
         'test_results_per_participant_ar': results_ar,
@@ -212,8 +221,8 @@ if __name__ == '__main__':
         pickle.dump(final_results, f)
 
     print_determinism_summary(
-        {f'ar_{k}': final_results[f'ar_{k}'] for k in ['auc','acc','precision','recall','f1']},
-        {f'va_{k}': final_results[f'va_{k}'] for k in ['auc','acc','precision','recall','f1']},
+        {f'ar_{k}': final_results[f'ar_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
+        {f'va_{k}': final_results[f'va_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")

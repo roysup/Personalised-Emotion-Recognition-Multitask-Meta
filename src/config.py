@@ -50,16 +50,16 @@ STRIDE      = 1280
 N_FOLDS     = 5
 MAX_NORM    = 1.0
 EPOCHS      = 30
-FT_EPOCHS      = 10   # fine-tuning epochs (transfer_mtl.py)
-FT_BATCH_SIZE  = 32   # fine-tuning batch size (transfer_mtl.py)
+FT_EPOCHS   = 10   # fine-tuning epochs (transfer_mtl.py, tlft.py)
 
 # =============================
 # BATCH SIZES
 # =============================
-PSTL_BATCH_SIZE = 32
+PSTL_BATCH_SIZE = 32          # canonical 32-sample batch size
+FT_BATCH_SIZE   = PSTL_BATCH_SIZE   # transfer_mtl, tlft  (was duplicate 32)
+SI_BATCH_SIZE   = PSTL_BATCH_SIZE   # si.py               (was duplicate 32)
 STL_BATCH_SIZE  = 8
 MTL_BATCH_SIZE  = 26
-SI_BATCH_SIZE   = 32
 
 # =============================
 # MTL LEARNING RATES / L2
@@ -69,9 +69,10 @@ MTL_TASK_LR   = 1e-4
 MTL_L2_TASK   = 1e-5
 MTL_L2_SHARED = 0.0
 
-# Aliases used by reptile scripts (backbone L2 is always 0, task L2 always 1e-5)
-L2_SHARED = MTL_L2_SHARED  # 0.0
-L2_TASK   = MTL_L2_TASK    # 1e-5
+# Canonical aliases — use these throughout MTML / Reptile scripts
+L2_SHARED = MTL_L2_SHARED   # 0.0
+L2_TASK   = MTL_L2_TASK     # 1e-5
+L2_LAMBDA = L2_TASK         # alias used by pure_meta, pstl (was duplicate 1e-5)
 
 # =============================
 # META-LEARNING DEFAULTS
@@ -81,19 +82,22 @@ META_LR      = 0.01
 INNER_STEPS  = 10
 INNER_LR     = 1e-3
 EPISODE_SIZE = 5
-L2_LAMBDA    = 1e-5
 
 # =============================
 # SCRIPT-SPECIFIC LR DEFAULTS
 # =============================
-SI_LR              = 3e-4    # si.py pretrain lr (= MTL_SHARED_LR)
-SI_L2              = 1e-5    # si.py l2 (= L2_LAMBDA)
-RETRAIN_LR         = 1e-4    # mtl_retrain.py
-TF_LR_PRE          = 1e-3    # tlft.py pretrain lr
-TF_LR_FT           = 1e-3    # tlft.py finetune lr
-TF_L2              = 1e-5    # tlft.py l2 (= L2_LAMBDA)
-TRANSFER_MTL_LR_PT = 1e-4    # transfer_mtl.py pretrain lr
-TRANSFER_MTL_LR_FT = 5e-5    # transfer_mtl.py finetune lr
+# mtl_retrain  — same value as MTL_TASK_LR, kept as alias for clarity in that script
+RETRAIN_LR         = MTL_TASK_LR    # 1e-4
+
+# tlft.py
+TF_LR_PRE          = 1e-3
+TF_LR_FT           = 1e-3
+# TF_L2 removed — tlft.py now uses L2_TASK directly
+
+# transfer_mtl.py
+TRANSFER_MTL_LR_PT = 1e-4
+TRANSFER_MTL_LR_FT = 5e-5
+# SI_LR / SI_L2 removed — si.py now uses MTL_SHARED_LR / L2_TASK directly
 
 # =============================
 # MTML TEST/TRAIN SPLIT
