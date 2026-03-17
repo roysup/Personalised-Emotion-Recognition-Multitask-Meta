@@ -11,8 +11,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from utils import (set_all_seeds, compute_metrics_from_cm,
                    aggregate_mtml_results, F1Score, make_kfolds,
-                   compute_per_participant_stds, print_determinism_summary,
-                   prefix_results)
+                   compute_per_participant_stds, print_determinism_summary)
 from data import create_sliding_windows, arrays_to_loader
 from models import SingleTaskModel
 from dataset_configs.vreed import load_vreed_df
@@ -22,8 +21,8 @@ output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_SI')
 os.makedirs(output_dir, exist_ok=True)
 
 BATCH_SIZE     = SI_BATCH_SIZE
-learning_rates = [MTL_SHARED_LR]   # was SI_LR = 3e-4 (duplicate of MTL_SHARED_LR)
-l2_lambdas     = [L2_TASK]         # was SI_L2 = 1e-5 (duplicate of L2_TASK)
+learning_rates = [MTL_SHARED_LR]
+l2_lambdas     = [L2_TASK]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}\nOutput: {output_dir}")
@@ -119,6 +118,12 @@ def hyperparameter_tuning(label_type='AR'):
 # EVALUATION HELPER
 # =============================
 def evaluate_per_participant(model, test_participants, test_data, label_type):
+    """
+    Evaluate a single pooled model per-participant on test data.
+    Returns result dicts using the prefixed key convention:
+      {p}_acc, {p}_f1, y_true_{p}, y_pred_probs_{p}, ...  where p = label_type.lower()
+    """
+    p = label_type.lower()   # 'ar' or 'va'
     model.eval()
     results = []
     for pid in sorted(test_participants):
@@ -142,9 +147,17 @@ def evaluate_per_participant(model, test_participants, test_data, label_type):
         y_pred = (y_prob > 0.5).astype(int)
         cm     = confusion_matrix(y_true, y_pred, labels=[0, 1])
         acc, prec, rec, f1 = compute_metrics_from_cm(cm)
-        results.append({'participant_id': pid, 'y_true': y_true, 'y_pred': y_pred,
-                        'y_pred_probs': y_prob, 'cm': cm,
-                        'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1})
+        results.append({
+            'participant_id':       pid,
+            'cm':                   cm,
+            f'{p}_acc':             acc,
+            f'{p}_precision':       prec,
+            f'{p}_recall':          rec,
+            f'{p}_f1':              f1,
+            f'y_true_{p}':          y_true,
+            f'y_pred_{p}':          y_pred,
+            f'y_pred_probs_{p}':    y_prob,
+        })
         print(f"  Participant {pid}: Acc={acc:.4f} F1={f1:.4f}")
     return results
 
@@ -201,8 +214,8 @@ if __name__ == '__main__':
         plt.xlabel('Predicted'); plt.ylabel('True')
         plt.savefig(os.path.join(output_dir, fname)); plt.close()
 
-    ar_stds = compute_per_participant_stds(prefix_results(results_ar, 'ar'), 'ar')
-    va_stds = compute_per_participant_stds(prefix_results(results_va, 'va'), 'va')
+    ar_stds = compute_per_participant_stds(results_ar, 'ar')
+    va_stds = compute_per_participant_stds(results_va, 'va')
 
     final_results = {
         'train_participants': train_participants,
@@ -211,8 +224,8 @@ if __name__ == '__main__':
                                  'VA': {'lr': best_lr_va, 'l2': best_l2_va}},
         **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc', 'precision', 'recall', 'f1', 'auc']},
         **{f'va_{k}': agg[f'va_{k}'] for k in ['acc', 'precision', 'recall', 'f1', 'auc']},
-        **{f'ar_{k}_std': v for k, v in ar_stds.items()},
-        **{f'va_{k}_std': v for k, v in va_stds.items()},
+        **ar_stds,   # keys already have the right names: ar_acc_std, ar_f1_std, etc.
+        **va_stds,
         'test_results_per_participant_ar': results_ar,
         'test_results_per_participant_va': results_va,
         'cm_ar': agg['cm_ar'], 'cm_va': agg['cm_va'],

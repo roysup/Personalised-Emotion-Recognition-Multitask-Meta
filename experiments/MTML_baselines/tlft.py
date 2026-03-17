@@ -11,8 +11,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from utils import (set_all_seeds, compute_metrics_from_cm,
                    aggregate_mtml_results, make_kfolds,
-                   compute_per_participant_stds, print_determinism_summary,
-                   prefix_results)
+                   compute_per_participant_stds, print_determinism_summary)
 from data import create_sliding_windows, arrays_to_loader
 from models import SingleTaskModel
 from dataset_configs.vreed import load_vreed_df
@@ -23,7 +22,7 @@ os.makedirs(output_dir, exist_ok=True)
 
 learning_rates_pre = [TF_LR_PRE]
 learning_rates_ft  = [TF_LR_FT]
-l2_lambdas         = [L2_TASK]     # was TF_L2 = 1e-5 (duplicate of L2_TASK)
+l2_lambdas         = [L2_TASK]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}\nOutput: {output_dir}")
@@ -101,6 +100,7 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
 
 
 def eval_model(model, X, y):
+    """Generic per-participant evaluation — returns unprefixed keys."""
     model.eval()
     loader = arrays_to_loader(X, y, FT_BATCH_SIZE, shuffle=False)
     probs, trues = [], []
@@ -115,6 +115,22 @@ def eval_model(model, X, y):
     acc, prec, rec, f1 = compute_metrics_from_cm(cm)
     return {'y_true': y_true, 'y_pred': y_pred, 'y_pred_probs': y_prob,
             'cm': cm, 'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1}
+
+
+def _prefix_result(r_raw, pid, label):
+    """Convert an eval_model dict to the prefixed MTML key convention."""
+    p = label.lower()
+    return {
+        'participant_id':       pid,
+        'cm':                   r_raw['cm'],
+        f'{p}_acc':             r_raw['accuracy'],
+        f'{p}_precision':       r_raw['precision'],
+        f'{p}_recall':          r_raw['recall'],
+        f'{p}_f1':              r_raw['f1'],
+        f'y_true_{p}':          r_raw['y_true'],
+        f'y_pred_{p}':          r_raw['y_pred'],
+        f'y_pred_probs_{p}':    r_raw['y_pred_probs'],
+    }
 
 
 # =============================
@@ -216,11 +232,11 @@ if __name__ == '__main__':
         ft_ar = finetune(base_ar, Xft_ar, yft_ar, best_lr_ft_ar, best_l2_ar, FT_EPOCHS, pid)
         ft_va = finetune(base_va, Xft_va, yft_va, best_lr_ft_va, best_l2_va, FT_EPOCHS, pid)
 
-        r_ar = eval_model(ft_ar, Xte_ar, yte_ar); r_ar['participant_id'] = pid
-        r_va = eval_model(ft_va, Xte_va, yte_va); r_va['participant_id'] = pid
+        r_ar = _prefix_result(eval_model(ft_ar, Xte_ar, yte_ar), pid, 'ar')
+        r_va = _prefix_result(eval_model(ft_va, Xte_va, yte_va), pid, 'va')
         results_ar.append(r_ar); results_va.append(r_va)
-        print(f"  AR Acc={r_ar['accuracy']:.4f} F1={r_ar['f1']:.4f} | "
-              f"VA Acc={r_va['accuracy']:.4f} F1={r_va['f1']:.4f}")
+        print(f"  AR Acc={r_ar['ar_acc']:.4f} F1={r_ar['ar_f1']:.4f} | "
+              f"VA Acc={r_va['va_acc']:.4f} F1={r_va['va_f1']:.4f}")
 
     agg = aggregate_mtml_results(results_ar, results_va)
 
@@ -240,8 +256,8 @@ if __name__ == '__main__':
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
         pickle.dump(roc_data, f)
 
-    ar_stds = compute_per_participant_stds(prefix_results(results_ar, 'ar'), 'ar')
-    va_stds = compute_per_participant_stds(prefix_results(results_va, 'va'), 'va')
+    ar_stds = compute_per_participant_stds(results_ar, 'ar')
+    va_stds = compute_per_participant_stds(results_va, 'va')
 
     final_results = {
         'train_participants': train_participants,

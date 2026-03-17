@@ -108,16 +108,6 @@ def make_kfolds(user_ids, k=5, seed=42):
     """
     Participant-level k-fold splits for meta-learning hyperparameter tuning.
     Distinct from create_kfold_splits which operates on video trial lists.
-
-    Parameters
-    ----------
-    user_ids : list of participant IDs
-    k        : int — number of folds
-    seed     : int — RNG seed for deterministic permutation
-
-    Returns
-    -------
-    folds : list of k lists, each containing participant IDs for that fold
     """
     rng = np.random.default_rng(seed)
     perm = rng.permutation([int(x) for x in user_ids]).tolist()
@@ -133,7 +123,6 @@ def create_kfold_splits(train_videos, n_folds):
     """
     Divide train_videos (list of length 10) into n_folds folds.
     Each fold yields (train_fold_videos, val_fold_videos).
-    Keeps folds deterministic: fold i uses videos[i*k : (i+1)*k] as val.
     """
     k = len(train_videos) // n_folds
     folds = []
@@ -151,8 +140,11 @@ def create_kfold_splits(train_videos, n_folds):
 def compute_per_participant_stds(results, key_prefix):
     """
     Given a list of per-participant result dicts and a key prefix ('ar' or 'va'),
-    return a dict of {metric: std} across participants.
-    Metrics: acc, precision, recall, f1, auc.
+    return a dict of {metric_std: value} across participants.
+
+    Expects result dicts to use the prefixed key convention:
+      {key_prefix}_acc, {key_prefix}_precision, {key_prefix}_recall, {key_prefix}_f1,
+      y_true_{key_prefix}, y_pred_probs_{key_prefix}.
     """
     metrics = ['acc', 'precision', 'recall', 'f1']
     stds = {}
@@ -172,10 +164,7 @@ def compute_per_participant_stds(results, key_prefix):
 def build_results_table(results):
     """
     Build a per-participant DataFrame from a list of result dicts.
-    Each dict must contain: participant_id, cm_ar, cm_va,
-    ar_acc, ar_precision, ar_recall, ar_f1,
-    va_acc, va_precision, va_recall, va_f1,
-    y_true_ar, y_pred_probs_ar, y_true_va, y_pred_probs_va.
+    Expects the standard MTL key convention (ar_acc, va_acc, y_true_ar, etc.).
     """
     rows = []
     for r in results:
@@ -202,12 +191,7 @@ def build_results_table(results):
 
 
 def save_misclassification_rates(results, participant_ids_map, output_path):
-    """
-    Compute and save per-participant misclassification counts.
-    participant_ids_map: dict {task_idx: participant_id} or list indexed by task_idx.
-    results: list of dicts with task_idx (or participant_id), y_true_ar, y_pred_ar,
-             y_true_va, y_pred_va.
-    """
+    """Compute and save per-participant misclassification counts."""
     rows = []
     for r in results:
         pid = (r['participant_id'] if 'participant_id' in r
@@ -266,48 +250,13 @@ def save_roc_plot(fpr, tpr, roc_auc, title, filepath):
     plt.figure(figsize=(8, 6))
     plt.plot(fpr, tpr, label=f'ROC (AUC = {roc_auc:.4f})', color='blue', linewidth=2)
     plt.plot([0, 1], [0, 1], 'k--', label='Random Classifier', linewidth=1.5)
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title(title)
-    plt.legend(loc='lower right')
+    plt.xlim([0.0, 1.0]); plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate'); plt.ylabel('True Positive Rate')
+    plt.title(title); plt.legend(loc='lower right')
     plt.grid(True, alpha=0.3)
     plt.savefig(filepath, dpi=300)
     plt.close()
 
-
-# =============================
-# MTML RESULT PREFIX HELPER  (was local _prefix() duplicated in 6 scripts)
-# =============================
-
-def prefix_results(results, prefix):
-    """
-    Re-key per-participant MTML result dicts so they match the key convention
-    expected by compute_per_participant_stds and print_determinism_summary.
-
-    Parameters
-    ----------
-    results : list of dicts with keys accuracy, precision, recall, f1,
-              y_true, y_pred_probs
-    prefix  : 'ar' or 'va'
-
-    Returns
-    -------
-    list of dicts with keys  {prefix}_acc, {prefix}_precision, ...,
-    y_true_{prefix}, y_pred_probs_{prefix}
-    """
-    return [
-        {
-            f'{prefix}_acc':        r['accuracy'],
-            f'{prefix}_precision':  r['precision'],
-            f'{prefix}_recall':     r['recall'],
-            f'{prefix}_f1':         r['f1'],
-            f'y_true_{prefix}':     r['y_true'],
-            f'y_pred_probs_{prefix}': r['y_pred_probs'],
-        }
-        for r in results
-    ]
 
 # =============================
 # RESULTS AGGREGATION (MTL + MTML)
@@ -316,11 +265,7 @@ def prefix_results(results, prefix):
 def aggregate_results(results):
     """
     Concatenate per-participant arrays and compute aggregate confusion matrix + metrics.
-
-    Returns
-    -------
-    dict with keys: cm_ar, cm_va, ar_acc/precision/recall/f1, va_*, auc_ar, auc_va,
-                    fpr_ar, tpr_ar, fpr_va, tpr_va
+    Expects the standard MTL key convention (ar_acc, y_true_ar, y_pred_probs_ar, etc.).
     """
     all_true_ar  = np.concatenate([r['y_true_ar']       for r in results])
     all_pred_ar  = np.concatenate([r['y_pred_ar']       for r in results])
@@ -339,35 +284,37 @@ def aggregate_results(results):
     auc_va, fpr_va, tpr_va = safe_roc_auc(all_true_va, all_probs_va)
 
     return {
-        'cm_ar':        cm_ar,       'cm_va':        cm_va,
-        'ar_acc':       ar_acc,      'va_acc':       va_acc,
-        'ar_precision': ar_prec,     'va_precision': va_prec,
-        'ar_recall':    ar_rec,      'va_recall':    va_rec,
-        'ar_f1':        ar_f1,       'va_f1':        va_f1,
-        'ar_auc':       auc_ar,      'va_auc':       auc_va,
-        'fpr_ar':       fpr_ar,      'tpr_ar':       tpr_ar,
-        'fpr_va':       fpr_va,      'tpr_va':       tpr_va,
+        'cm_ar': cm_ar, 'cm_va': cm_va,
+        'ar_acc': ar_acc, 'va_acc': va_acc,
+        'ar_precision': ar_prec, 'va_precision': va_prec,
+        'ar_recall': ar_rec, 'va_recall': va_rec,
+        'ar_f1': ar_f1, 'va_f1': va_f1,
+        'ar_auc': auc_ar, 'va_auc': auc_va,
+        'fpr_ar': fpr_ar, 'tpr_ar': tpr_ar,
+        'fpr_va': fpr_va, 'tpr_va': tpr_va,
     }
 
 
 def aggregate_mtml_results(results_ar, results_va):
     """
-    Concatenate per-participant MTML results and return aggregate metrics for
-    both AR and VA in one call.  Result dicts must have keys:
-    y_true, y_pred, y_pred_probs, (optionally accuracy/precision/recall/f1).
+    Concatenate per-participant MTML results and return aggregate metrics.
+
+    Expects result dicts to use the prefixed key convention produced by
+    evaluate_test_user and the inline result construction in MTML scripts:
+      y_true_{p}, y_pred_{p}, y_pred_probs_{p}  where p is 'ar' or 'va'.
 
     Returns
     -------
-    dict with keys mirroring aggregate_results():
-        cm_ar, cm_va,
-        ar_acc, ar_precision, ar_recall, ar_f1, ar_auc, fpr_ar, tpr_ar,
-        va_acc, va_precision, va_recall, va_f1, va_auc, fpr_va, tpr_va,
-        all_true_ar, all_probs_ar, all_true_va, all_probs_va
+    dict with keys matching aggregate_results():
+        cm_ar, cm_va, ar_acc, ar_precision, ar_recall, ar_f1, ar_auc,
+        fpr_ar, tpr_ar, va_acc, va_precision, va_recall, va_f1, va_auc,
+        fpr_va, tpr_va, all_true_ar, all_probs_ar, all_true_va, all_probs_va
     """
     def _agg_one(results, label):
-        all_true  = np.concatenate([r['y_true']       for r in results])
-        all_pred  = np.concatenate([r['y_pred']        for r in results])
-        all_probs = np.concatenate([r['y_pred_probs']  for r in results])
+        p = label.lower()    # 'ar' or 'va'
+        all_true  = np.concatenate([r[f'y_true_{p}']      for r in results])
+        all_pred  = np.concatenate([r[f'y_pred_{p}']       for r in results])
+        all_probs = np.concatenate([r[f'y_pred_probs_{p}'] for r in results])
         cm = confusion_matrix(all_true, all_pred, labels=[0, 1])
         acc, prec, rec, f1 = compute_metrics_from_cm(cm)
         auc_val, fpr, tpr  = safe_roc_auc(all_true, all_probs)

@@ -8,10 +8,12 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
 from utils import (set_all_seeds, compute_metrics_from_cm,
                    aggregate_mtml_results, make_kfolds, compute_per_participant_stds,
-                   print_determinism_summary, prefix_results)
+                   print_determinism_summary)
 from data import build_support_query
 from models import SingleTaskModel
+from training import reptile_outer_update
 from dataset_configs.vreed import load_vreed_df
+
 hardcoded_splits = HARDCODED_SPLITS
 BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_PureMeta')
@@ -75,12 +77,10 @@ def reptile_train(model, train_users, meta_steps, meta_lr, inner_steps, inner_lr
     uids = sorted(train_users.keys())
     model.to(device)
     for step in range(meta_steps):
-        uid        = int(rng.choice(uids))
+        uid = int(rng.choice(uids))
         sup_loader, _ = make_sup_q_loader(train_users[uid], hardcoded_splits, uid, ar_or_va, seed)
-        adapted    = adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2)
-        with torch.no_grad():
-            for p, pa in zip(model.parameters(), adapted.parameters()):
-                p.data.add_(meta_lr * (pa.data - p.data))
+        adapted = adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2)
+        reptile_outer_update(model, [adapted], meta_lr)
     return model
 
 
@@ -159,7 +159,7 @@ if __name__ == '__main__':
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'meta_model_va_final.pth'))
 
     results_ar, results_va = [], []
-    for model, results, label, bms, bisp, bilr in [
+    for model, results_list, label, bms, bisp, bilr in [
         (model_ar, results_ar, 'ar', bms_ar, bisp_ar, bilr_ar),
         (model_va, results_va, 'va', bms_va, bisp_va, bilr_va)]:
         print(f'\n' + '='*60 + f'\nEVALUATION {label.upper()}\n' + '='*60)
@@ -178,9 +178,18 @@ if __name__ == '__main__':
             y_pred = (y_prob > 0.5).astype(int)
             cm     = confusion_matrix(y_true, y_pred, labels=[0, 1])
             acc, prec, rec, f1 = compute_metrics_from_cm(cm)
-            results.append({'participant_id': uid, 'y_true': y_true, 'y_pred': y_pred,
-                             'y_pred_probs': y_prob, 'cm': cm,
-                             'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1})
+            p = label
+            results_list.append({
+                'participant_id':       uid,
+                'cm':                   cm,
+                f'{p}_acc':             acc,
+                f'{p}_precision':       prec,
+                f'{p}_recall':          rec,
+                f'{p}_f1':              f1,
+                f'y_true_{p}':          y_true,
+                f'y_pred_{p}':          y_pred,
+                f'y_pred_probs_{p}':    y_prob,
+            })
             print(f"  Participant {uid}: Acc={acc:.4f} F1={f1:.4f}")
 
     agg = aggregate_mtml_results(results_ar, results_va)
@@ -194,8 +203,8 @@ if __name__ == '__main__':
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
         pickle.dump(global_roc, f)
 
-    ar_stds = compute_per_participant_stds(prefix_results(results_ar, 'ar'), 'ar')
-    va_stds = compute_per_participant_stds(prefix_results(results_va, 'va'), 'va')
+    ar_stds = compute_per_participant_stds(results_ar, 'ar')
+    va_stds = compute_per_participant_stds(results_va, 'va')
 
     final_results = {
         'train_participants': train_participants, 'test_participants': test_participants,

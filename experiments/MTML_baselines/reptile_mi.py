@@ -9,12 +9,11 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import *
 
-
 from utils import (set_all_seeds,
                    aggregate_mtml_results, compute_per_participant_stds,
-                   print_determinism_summary, prefix_results)
+                   print_determinism_summary)
 from models import BaseFeatureExtractor, TaskHead
-from training import adapt_inner_loop, evaluate_test_user
+from training import adapt_inner_loop, evaluate_test_user, reptile_outer_update
 from data import build_support_query
 from dataset_configs.vreed import load_vreed_df
 
@@ -108,7 +107,7 @@ def reptile_train_mi(train_users, label_type, seed):
     uids  = sorted(train_users.keys())
     for step in range(META_STEPS):
         selected = mi_guided_episode(uids, mi_matrix, rng, EPISODE_SIZE)
-        deltas = []
+        adapted_bases = []
         for uid in selected:
             sup_loader, _ = build_support_query(train_users[uid],
                                                  hardcoded_splits[uid]['train'], [],
@@ -117,14 +116,8 @@ def reptile_train_mi(train_users, label_type, seed):
                 base, heads[uid], sup_loader, label_type,
                 INNER_STEPS, INNER_LR, device, L2_SHARED, L2_TASK)
             heads[uid] = adapted_head
-            delta = OrderedDict()
-            for (name, p0), (_, pa) in zip(base.named_parameters(), adapted_base.named_parameters()):
-                delta[name] = pa.data - p0.data
-            deltas.append(delta)
-        mean_delta = {name: torch.stack([d[name] for d in deltas]).mean(0) for name in deltas[0]}
-        with torch.no_grad():
-            for name, p in base.named_parameters():
-                p.data.add_(META_LR * mean_delta[name])
+            adapted_bases.append(adapted_base)
+        reptile_outer_update(base, adapted_bases, META_LR)
     return base
 
 
@@ -146,7 +139,7 @@ if __name__ == '__main__':
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'reptile_mi_model_va_final.pth'))
 
     results_ar, results_va = [], []
-    for model, results, label in [
+    for model, results_list, label in [
         (model_ar, results_ar, 'ar'),
         (model_va, results_va, 'va')]:
         print(f'\n' + '='*60 + f'\nEVALUATION {label.upper()}\n' + '='*60)
@@ -155,22 +148,22 @@ if __name__ == '__main__':
             r = evaluate_test_user(model, TaskHead(), test_users[uid], hardcoded_splits,
                                     uid, label, device, INNER_STEPS, INNER_LR, L2_SHARED, L2_TASK)
             if r is not None:
-                results.append(r)
-                print(f"  Participant {uid}: Acc={r['accuracy']:.4f} F1={r['f1']:.4f}")
+                results_list.append(r)
+                print(f"  Participant {uid}: Acc={r[f'{label}_acc']:.4f} F1={r[f'{label}_f1']:.4f}")
 
     agg = aggregate_mtml_results(results_ar, results_va)
-    ar_acc, ar_prec, ar_rec, ar_f1, ar_auc = agg['ar_acc'], agg['ar_precision'], agg['ar_recall'], agg['ar_f1'], agg['ar_auc']
-    va_acc, va_prec, va_rec, va_f1, va_auc = agg['va_acc'], agg['va_precision'], agg['va_recall'], agg['va_f1'], agg['va_auc']
-    ar_fpr, ar_tpr = agg['fpr_ar'], agg['tpr_ar']
-    va_fpr, va_tpr = agg['fpr_va'], agg['tpr_va']
-    all_true_ar, all_probs_ar = agg['all_true_ar'], agg['all_probs_ar']
-    all_true_va, all_probs_va = agg['all_true_va'], agg['all_probs_va']
-    cm_AR, cm_VA = agg['cm_ar'], agg['cm_va']
 
-    global_roc = {'AR': {'fpr': ar_fpr, 'tpr': ar_tpr, 'auc': ar_auc, 'y_true': all_true_ar, 'y_pred_probs': all_probs_ar},
-                  'VA': {'fpr': va_fpr, 'tpr': va_tpr, 'auc': va_auc, 'y_true': all_true_va, 'y_pred_probs': all_probs_va}}
+    global_roc = {
+        'AR': {'fpr': agg['fpr_ar'], 'tpr': agg['tpr_ar'], 'auc': agg['ar_auc'],
+               'y_true': agg['all_true_ar'], 'y_pred_probs': agg['all_probs_ar']},
+        'VA': {'fpr': agg['fpr_va'], 'tpr': agg['tpr_va'], 'auc': agg['va_auc'],
+               'y_true': agg['all_true_va'], 'y_pred_probs': agg['all_probs_va']},
+    }
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
         pickle.dump(global_roc, f)
+
+    ar_stds = compute_per_participant_stds(results_ar, 'ar')
+    va_stds = compute_per_participant_stds(results_va, 'va')
 
     final_results = {
         'train_participants': train_participants, 'test_participants': test_participants,
@@ -179,23 +172,18 @@ if __name__ == '__main__':
                    'inner_lr': INNER_LR, 'l2_shared': L2_SHARED, 'l2_task': L2_TASK},
             'VA': {'meta_steps': META_STEPS, 'meta_lr': META_LR, 'inner_steps': INNER_STEPS,
                    'inner_lr': INNER_LR, 'l2_shared': L2_SHARED, 'l2_task': L2_TASK}},
-        'ar_acc': ar_acc, 'ar_precision': ar_prec, 'ar_recall': ar_rec, 'ar_f1': ar_f1, 'ar_auc': ar_auc,
-        'va_acc': va_acc, 'va_precision': va_prec, 'va_recall': va_rec, 'va_f1': va_f1, 'va_auc': va_auc,
+        **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
+        **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
         'test_results_per_participant_ar': results_ar,
         'test_results_per_participant_va': results_va,
-        'cm_ar': cm_AR, 'cm_va': cm_VA,
+        'cm_ar': agg['cm_ar'], 'cm_va': agg['cm_va'],
     }
     with open(os.path.join(output_dir, 'reptile_mi_results.pkl'), 'wb') as f:
         pickle.dump(final_results, f)
 
-    # =============================
-    # DETERMINISM SUMMARY
-    # =============================
-    ar_stds = compute_per_participant_stds(prefix_results(results_ar, 'ar'), 'ar')
-    va_stds = compute_per_participant_stds(prefix_results(results_va, 'va'), 'va')
     print_determinism_summary(
-        {f"ar_{k}": final_results[f"ar_{k}"] for k in ["auc", "acc", "precision", "recall", "f1"]},
-        {f"va_{k}": final_results[f"va_{k}"] for k in ["auc", "acc", "precision", "recall", "f1"]},
+        {f'ar_{k}': final_results[f'ar_{k}'] for k in ['auc','acc','precision','recall','f1']},
+        {f'va_{k}': final_results[f'va_{k}'] for k in ['auc','acc','precision','recall','f1']},
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")

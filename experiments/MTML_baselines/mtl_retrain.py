@@ -23,8 +23,7 @@ from sklearn.metrics import confusion_matrix, f1_score
 
 from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
                    make_kfolds, aggregate_mtml_results,
-                   compute_per_participant_stds, print_determinism_summary,
-                   prefix_results)
+                   compute_per_participant_stds, print_determinism_summary)
 from data import create_sliding_windows, BalancedSampler
 from models import MTLTransferModel
 from dataset_configs.vreed import load_vreed_df
@@ -263,7 +262,7 @@ if __name__ == '__main__':
             tids_ar = torch.full((X_t.size(0),), li_ar, dtype=torch.long, device=device)
             tids_va = torch.full((X_t.size(0),), li_va, dtype=torch.long, device=device)
 
-            for model, tids, y_true, results, label in [
+            for model, tids, y_true, results_list, label in [
                 (model_ar, tids_ar, y_ar, results_ar, 'ar'),
                 (model_va, tids_va, y_va, results_va, 'va'),
             ]:
@@ -272,13 +271,21 @@ if __name__ == '__main__':
                 y_int = y_true.astype(int)
                 cm    = confusion_matrix(y_int, preds, labels=[0, 1])
                 acc, prec, rec, f1 = compute_metrics_from_cm(cm)
-                results.append({'participant_id': uid, 'y_true': y_int, 'y_pred': preds,
-                                 'y_pred_probs': probs, 'cm': cm,
-                                 'accuracy': acc, 'precision': prec,
-                                 'recall': rec, 'f1': f1})
+                p = label
+                results_list.append({
+                    'participant_id':       uid,
+                    'cm':                   cm,
+                    f'{p}_acc':             acc,
+                    f'{p}_precision':       prec,
+                    f'{p}_recall':          rec,
+                    f'{p}_f1':              f1,
+                    f'y_true_{p}':          y_int,
+                    f'y_pred_{p}':          preds,
+                    f'y_pred_probs_{p}':    probs,
+                })
             print(f"  Participant {uid}: "
-                  f"AR acc={results_ar[-1]['accuracy']:.4f} | "
-                  f"VA acc={results_va[-1]['accuracy']:.4f}")
+                  f"AR acc={results_ar[-1]['ar_acc']:.4f} | "
+                  f"VA acc={results_va[-1]['va_acc']:.4f}")
 
     agg = aggregate_mtml_results(results_ar, results_va)
 
@@ -289,16 +296,17 @@ if __name__ == '__main__':
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
         pickle.dump(roc_data, f)
 
+    ar_stds = compute_per_participant_stds(results_ar, 'ar')
+    va_stds = compute_per_participant_stds(results_va, 'va')
+
     final_results = {
         'train_participants': train_participants,
         'test_participants':  test_participants,
         'best_hyperparameters': {
             'AR': {'lr': best_lr_ar, 'l2_shared': L2_SHARED, 'l2_task': L2_TASK},
             'VA': {'lr': best_lr_va, 'l2_shared': L2_SHARED, 'l2_task': L2_TASK}},
-        'ar_acc': agg['ar_acc'], 'ar_precision': agg['ar_precision'],
-        'ar_recall': agg['ar_recall'], 'ar_f1': agg['ar_f1'], 'ar_auc': agg['ar_auc'],
-        'va_acc': agg['va_acc'], 'va_precision': agg['va_precision'],
-        'va_recall': agg['va_recall'], 'va_f1': agg['va_f1'], 'va_auc': agg['va_auc'],
+        **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc', 'precision', 'recall', 'f1', 'auc']},
+        **{f'va_{k}': agg[f'va_{k}'] for k in ['acc', 'precision', 'recall', 'f1', 'auc']},
         'test_results_per_participant_ar': results_ar,
         'test_results_per_participant_va': results_va,
         'cm_ar': agg['cm_ar'], 'cm_va': agg['cm_va'],
@@ -306,8 +314,6 @@ if __name__ == '__main__':
     with open(os.path.join(output_dir, 'mtl_results.pkl'), 'wb') as f:
         pickle.dump(final_results, f)
 
-    ar_stds = compute_per_participant_stds(prefix_results(results_ar, 'ar'), 'ar')
-    va_stds = compute_per_participant_stds(prefix_results(results_va, 'va'), 'va')
     print_determinism_summary(
         {f'ar_{k}': final_results[f'ar_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
         {f'va_{k}': final_results[f'va_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},

@@ -27,6 +27,35 @@ def _pcgrad_project(grad_list):
 
 
 # =============================
+# REPTILE OUTER UPDATE
+# =============================
+
+def reptile_outer_update(model: torch.nn.Module,
+                         adapted_models: list,
+                         meta_lr: float) -> None:
+    """
+    In-place Reptile outer update: interpolate model parameters toward
+    the mean of the adapted copies.  Works for any episode size >= 1.
+
+    Replaces the two inline patterns previously scattered across four scripts:
+      ST-style  — `for p, pa in zip(model.parameters(), adapted.parameters()): p.data.add_(...)`
+      MT-style  — OrderedDict delta accumulation + named_parameters loop
+
+    Parameters
+    ----------
+    model          : nn.Module — meta-model updated in-place
+    adapted_models : list[nn.Module] — adapted copies from adapt_inner_loop / adapt()
+    meta_lr        : float — outer-loop step size
+    """
+    with torch.no_grad():
+        for name, p in model.named_parameters():
+            mean_adapted = torch.stack(
+                [dict(m.named_parameters())[name].data for m in adapted_models]
+            ).mean(0)
+            p.data.add_(meta_lr * (mean_adapted - p.data))
+
+
+# =============================
 # EVALUATION — P-STL (DataLoader-based)
 # =============================
 
@@ -37,34 +66,29 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
 
     Parameters
     ----------
-    model            : nn.Module (for STL pass a 2-tuple (model_ar, model_va))
+    model            : nn.Module (for P-STL pass a 2-tuple (model_ar, model_va))
     test_loaders_ar  : dict {task_idx: DataLoader}
     test_loaders_va  : dict {task_idx: DataLoader}
     participant_ids  : list of participant IDs indexed by task_idx
     device           : torch.device
-    is_mtl           : bool — if True, model(X, task_ids) is called;
-                       if False, model(X) is called.
-                       For P-STL pass is_mtl=False and model as a 2-tuple (model_ar, model_va).
+    is_mtl           : bool — if True, model(X, task_ids) is called
 
     Returns
     -------
-    results : list of dicts, one per participant
+    results : list of dicts, one per participant, with keys matching
+              the MTL convention: ar_acc, va_acc, y_true_ar, y_pred_probs_ar, ...
     """
     results = []
 
-    # Normalise model argument
     if isinstance(model, tuple):
         model_ar, model_va = model
-        model_ar.eval()
-        model_va.eval()
+        model_ar.eval(); model_va.eval()
         use_pair = True
     elif isinstance(model, dict):
-        use_pair = False
-        use_dict = True
+        use_pair = False; use_dict = True
     else:
         model.eval()
-        use_pair = False
-        use_dict = False
+        use_pair = False; use_dict = False
 
     with torch.no_grad():
         for task_idx in sorted(test_loaders_ar.keys()):
@@ -85,39 +109,32 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
             y_true_va, y_pred_va, y_probs_va = [], [], []
 
             for batch_ar, batch_va in zip(loader_ar, loader_va):
-                X_ar = batch_ar[0].to(device)
-                y_ar = batch_ar[1]
-                X_va = batch_va[0].to(device)
-                y_va = batch_va[1]
+                X_ar = batch_ar[0].to(device); y_ar = batch_ar[1]
+                X_va = batch_va[0].to(device); y_va = batch_va[1]
 
                 if is_mtl:
-                    tids_ar = batch_ar[2].to(device)
-                    tids_va = batch_va[2].to(device)
-                    out_ar  = m_ar(X_ar, tids_ar)
-                    out_va  = m_va(X_va, tids_va)
+                    out_ar = m_ar(X_ar, batch_ar[2].to(device))
+                    out_va = m_va(X_va, batch_va[2].to(device))
                 else:
                     out_ar = m_ar(X_ar)
                     out_va = m_va(X_va)
 
                 prob_ar = torch.sigmoid(out_ar).cpu().numpy().flatten()
                 prob_va = torch.sigmoid(out_va).cpu().numpy().flatten()
-
                 y_true_ar.extend(y_ar.int().numpy().flatten())
                 y_pred_ar.extend((prob_ar > 0.5).astype(int))
                 y_probs_ar.extend(prob_ar)
-
                 y_true_va.extend(y_va.int().numpy().flatten())
                 y_pred_va.extend((prob_va > 0.5).astype(int))
                 y_probs_va.extend(prob_va)
 
-            y_true_ar = np.array(y_true_ar);  y_pred_ar = np.array(y_pred_ar)
+            y_true_ar = np.array(y_true_ar); y_pred_ar  = np.array(y_pred_ar)
             y_probs_ar= np.array(y_probs_ar)
-            y_true_va = np.array(y_true_va);  y_pred_va = np.array(y_pred_va)
+            y_true_va = np.array(y_true_va); y_pred_va  = np.array(y_pred_va)
             y_probs_va= np.array(y_probs_va)
 
             cm_ar = confusion_matrix(y_true_ar, y_pred_ar, labels=[0, 1])
             cm_va = confusion_matrix(y_true_va, y_pred_va, labels=[0, 1])
-
             ar_acc, ar_prec, ar_rec, ar_f1 = compute_metrics_from_cm(cm_ar)
             va_acc, va_prec, va_rec, va_f1 = compute_metrics_from_cm(cm_va)
 
@@ -127,23 +144,15 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
                   f"VA acc={va_acc:.4f} f1={va_f1:.4f}")
 
             results.append({
-                'task_idx':        task_idx,
-                'participant_id':  pid,
-                'cm_ar':           cm_ar,
-                'cm_va':           cm_va,
-                'ar_acc':          ar_acc,
-                'ar_precision':    ar_prec,
-                'ar_recall':       ar_rec,
-                'ar_f1':           ar_f1,
-                'va_acc':          va_acc,
-                'va_precision':    va_prec,
-                'va_recall':       va_rec,
-                'va_f1':           va_f1,
-                'y_true_ar':       y_true_ar,
-                'y_pred_ar':       y_pred_ar,
+                'task_idx': task_idx, 'participant_id': pid,
+                'cm_ar': cm_ar, 'cm_va': cm_va,
+                'ar_acc': ar_acc, 'ar_precision': ar_prec,
+                'ar_recall': ar_rec, 'ar_f1': ar_f1,
+                'va_acc': va_acc, 'va_precision': va_prec,
+                'va_recall': va_rec, 'va_f1': va_f1,
+                'y_true_ar': y_true_ar, 'y_pred_ar': y_pred_ar,
                 'y_pred_probs_ar': y_probs_ar,
-                'y_true_va':       y_true_va,
-                'y_pred_va':       y_pred_va,
+                'y_true_va': y_true_va, 'y_pred_va': y_pred_va,
                 'y_pred_probs_va': y_probs_va,
             })
 
@@ -159,22 +168,7 @@ def evaluate_stl_all(models_ar, models_va, test_data_dict,
                      window_size=2560, stride=1280):
     """
     Evaluate per-participant STL models over raw test DataFrames.
-
-    Mirrors evaluate_mtl_all() but accepts per-participant model dicts rather
-    than a single shared model.  Moved here from stl.py's local _evaluate_participant.
-
-    Parameters
-    ----------
-    models_ar / models_va : dict {task_idx: nn.Module}
-    test_data_dict        : dict {task_idx: DataFrame}
-    participant_ids       : list of participant IDs indexed by task_idx
-    device                : torch.device
-    window_size / stride  : windowing parameters
-
-    Returns
-    -------
-    list of per-participant result dicts compatible with aggregate_results()
-    and save_all_results().
+    Returns per-participant result dicts using the standard MTL key convention.
     """
     from data import create_sliding_windows
 
@@ -190,7 +184,7 @@ def evaluate_stl_all(models_ar, models_va, test_data_dict,
         if len(X) == 0:
             continue
 
-        X_t  = torch.tensor(X, dtype=torch.float32).to(device)
+        X_t = torch.tensor(X, dtype=torch.float32).to(device)
         m_ar = models_ar[task_idx]; m_ar.eval()
         m_va = models_va[task_idx]; m_va.eval()
 
@@ -210,15 +204,15 @@ def evaluate_stl_all(models_ar, models_va, test_data_dict,
               f"VA acc={va_acc:.4f} f1={va_f1:.4f}")
 
         results.append({
-            'task_idx':        task_idx, 'participant_id':  pid,
-            'cm_ar':           cm_ar,    'cm_va':           cm_va,
-            'ar_acc':          ar_acc,   'ar_precision':    ar_prec,
-            'ar_recall':       ar_rec,   'ar_f1':           ar_f1,
-            'va_acc':          va_acc,   'va_precision':    va_prec,
-            'va_recall':       va_rec,   'va_f1':           va_f1,
-            'y_true_ar':       y_ar_i,   'y_pred_ar':       pred_ar,
+            'task_idx': task_idx, 'participant_id': pid,
+            'cm_ar': cm_ar, 'cm_va': cm_va,
+            'ar_acc': ar_acc, 'ar_precision': ar_prec,
+            'ar_recall': ar_rec, 'ar_f1': ar_f1,
+            'va_acc': va_acc, 'va_precision': va_prec,
+            'va_recall': va_rec, 'va_f1': va_f1,
+            'y_true_ar': y_ar_i, 'y_pred_ar': pred_ar,
             'y_pred_probs_ar': prob_ar,
-            'y_true_va':       y_va_i,   'y_pred_va':       pred_va,
+            'y_true_va': y_va_i, 'y_pred_va': pred_va,
             'y_pred_probs_va': prob_va,
         })
     return results
@@ -233,24 +227,8 @@ def adapt_inner_loop(base_model, head, sup_loader, ar_or_va,
                      l2_shared=0.0, l2_task=1e-5):
     """
     Reptile / MAML-style inner-loop adaptation for one participant.
-    Deep-copies both backbone and head, adapts them on the support set,
-    and returns the adapted copies (originals are unchanged).
-
-    Parameters
-    ----------
-    base_model  : BaseFeatureExtractor — shared backbone
-    head        : TaskHead — participant-specific head
-    sup_loader  : DataLoader yielding (X, y) support batches
-    ar_or_va    : 'ar' or 'va'
-    inner_steps : int
-    inner_lr    : float
-    device      : torch.device
-    l2_shared   : float — L2 lambda for backbone params
-    l2_task     : float — L2 lambda for head params
-
-    Returns
-    -------
-    adapted_base, adapted_head
+    Deep-copies both backbone and head, adapts on the support set,
+    and returns the adapted copies (originals unchanged).
     """
     import copy
     from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -290,10 +268,9 @@ def evaluate_test_user(base_model, head, test_df, splits, uid, ar_or_va,
     """
     Adapt the meta-learned backbone to one test participant and evaluate.
 
-    Returns
-    -------
-    dict with participant_id, y_true, y_pred, y_pred_probs, cm,
-    accuracy, precision, recall, f1  — or None if no query windows.
+    Returns a result dict with prefixed keys matching the MTML key convention:
+      {ar_or_va}_acc, {ar_or_va}_f1, y_true_{ar_or_va}, y_pred_probs_{ar_or_va}, ...
+    Returns None if no query windows are available.
     """
     from data import build_support_query
 
@@ -321,9 +298,18 @@ def evaluate_test_user(base_model, head, test_df, splits, uid, ar_or_va,
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     acc, prec, rec, f1 = compute_metrics_from_cm(cm)
 
-    return {'participant_id': uid, 'y_true': y_true, 'y_pred': y_pred,
-            'y_pred_probs': y_prob, 'cm': cm,
-            'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1}
+    p = ar_or_va
+    return {
+        'participant_id':       uid,
+        'cm':                   cm,
+        f'{p}_acc':             acc,
+        f'{p}_precision':       prec,
+        f'{p}_recall':          rec,
+        f'{p}_f1':              f1,
+        f'y_true_{p}':          y_true,
+        f'y_pred_{p}':          y_pred,
+        f'y_pred_probs_{p}':    y_prob,
+    }
 
 
 # =============================
@@ -334,19 +320,8 @@ def evaluate_mtl_all(model_ar, model_va, test_data_dict,
                      participant_ids, device,
                      window_size=2560, stride=1280):
     """
-    Evaluate a pair of MTL models (one per label) over per-participant test sets.
-
-    Parameters
-    ----------
-    model_ar / model_va : MTLModel (or MTLModelUW)
-    test_data_dict      : dict {task_idx: DataFrame}
-    participant_ids     : list of participant IDs indexed by task_idx
-    device              : torch.device
-    window_size / stride: windowing parameters
-
-    Returns
-    -------
-    list of per-participant result dicts compatible with aggregate_results().
+    Evaluate a pair of MTL models over per-participant test sets.
+    Returns per-participant result dicts using the standard MTL key convention.
     """
     from data import create_sliding_windows
 
@@ -399,20 +374,6 @@ def evaluate_mtl_all(model_ar, model_va, test_data_dict,
 def save_all_results(results, agg, output_dir, method_name, misclassification_csv):
     """
     Save the full results bundle produced by any MTL/MTML training script.
-
-    Parameters
-    ----------
-    results              : list of per-participant result dicts
-    agg                  : dict returned by aggregate_results()
-    output_dir           : str
-    method_name          : str — used in plot titles, e.g. 'MTL-HPS'
-    misclassification_csv: str — filename only (not full path)
-
-    Writes
-    ------
-    per_participant_results.csv, <misclassification_csv>,
-    ar_cm.png, va_cm.png, ar_roc.png, va_roc.png
-    (pickle saving is left to the caller — pkl filename and extra keys vary per script)
     """
     import os
     from utils import (save_misclassification_rates, build_results_table,
