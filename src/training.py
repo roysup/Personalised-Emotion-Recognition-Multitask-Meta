@@ -109,12 +109,12 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
             y_true_va, y_pred_va, y_probs_va = [], [], []
 
             for batch_ar, batch_va in zip(loader_ar, loader_va):
-                X_ar = batch_ar[0].to(device); y_ar = batch_ar[1]
-                X_va = batch_va[0].to(device); y_va = batch_va[1]
+                X_ar = batch_ar[0].to(device, non_blocking=True); y_ar = batch_ar[1]
+                X_va = batch_va[0].to(device, non_blocking=True); y_va = batch_va[1]
 
                 if is_mtl:
-                    out_ar = m_ar(X_ar, batch_ar[2].to(device))
-                    out_va = m_va(X_va, batch_va[2].to(device))
+                    out_ar = m_ar(X_ar, batch_ar[2].to(device, non_blocking=True))
+                    out_va = m_va(X_va, batch_va[2].to(device, non_blocking=True))
                 else:
                     out_ar = m_ar(X_ar)
                     out_va = m_va(X_va)
@@ -184,7 +184,7 @@ def evaluate_stl_all(models_ar, models_va, test_data_dict,
         if len(X) == 0:
             continue
 
-        X_t = torch.tensor(X, dtype=torch.float32).to(device)
+        X_t = torch.tensor(X, dtype=torch.float32).to(device, non_blocking=True)
         m_ar = models_ar[task_idx]; m_ar.eval()
         m_va = models_va[task_idx]; m_va.eval()
 
@@ -246,8 +246,8 @@ def adapt_inner_loop(base_model, head, sup_loader, ar_or_va,
     for step in range(inner_steps):
         ep_loss = 0.0; nb = 0
         for Xb, yb in sup_loader:
-            Xb, yb = Xb.to(device), yb.to(device)
-            opt.zero_grad()
+            Xb, yb = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
+            opt.zero_grad(set_to_none=True)
             loss = loss_fn(adapted_head(adapted_base(Xb)), yb)
             loss = loss + (l2_shared * sum(p.norm(2)**2 for p in sp if p.requires_grad) +
                            l2_task   * sum(p.norm(2)**2 for p in tp if p.requires_grad))
@@ -288,7 +288,7 @@ def evaluate_test_user(base_model, head, test_df, splits, uid, ar_or_va,
     probs, labels = [], []
     with torch.no_grad():
         for Xb, yb in q_loader:
-            probs.extend(torch.sigmoid(adapted_head(adapted_base(Xb.to(device))))
+            probs.extend(torch.sigmoid(adapted_head(adapted_base(Xb.to(device, non_blocking=True))))
                          .cpu().numpy().flatten())
             labels.extend(yb.numpy().flatten())
 
@@ -335,8 +335,8 @@ def evaluate_mtl_all(model_ar, model_va, test_data_dict,
         if len(X) == 0:
             continue
 
-        X_t    = torch.tensor(X, dtype=torch.float32).to(device)
-        tids_t = torch.full((len(X),), task_idx, dtype=torch.long).to(device)
+        X_t    = torch.tensor(X, dtype=torch.float32).to(device, non_blocking=True)
+        tids_t = torch.full((len(X),), task_idx, dtype=torch.long).to(device, non_blocking=True)
 
         model_ar.eval(); model_va.eval()
         with torch.no_grad():

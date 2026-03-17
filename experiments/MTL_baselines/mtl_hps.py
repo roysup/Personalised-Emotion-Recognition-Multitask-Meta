@@ -4,7 +4,7 @@ Shared CNN+LSTM backbone, task-specific dense heads per participant.
 Separate AR and VA models trained sequentially.
 Seed is reset before AR training and again before VA training.
 """
-import os, sys
+import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
@@ -21,6 +21,8 @@ OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if device.type == 'cuda':
+    torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
 
 set_all_seeds(SEED)
@@ -43,7 +45,7 @@ def _train_mtl(label_type, lr_shared, lr_task, train_data_dict):
         {'params': model.task_specific_parameters(), 'lr': lr_task},
     ])
     sched     = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.1, patience=3)
-    loss_fn   = nn.BCEWithLogitsLoss(reduction='none')
+    loss_fn   = nn.BCEWithLogitsLoss()
     best_loss = float('inf')
     ckpt_path = os.path.join(OUTPUT_DIR, f'best_model_{label_type}_hps_tuned.pt')
 
@@ -51,9 +53,9 @@ def _train_mtl(label_type, lr_shared, lr_task, train_data_dict):
         model.train()
         running = 0.0
         for batch in loader:
-            X_b, y_b, task_ids, _ = [b.to(device) for b in batch]
-            opt.zero_grad()
-            loss  = loss_fn(model(X_b, task_ids), y_b).mean()
+            X_b, y_b, task_ids, _ = [b.to(device, non_blocking=True) for b in batch]
+            opt.zero_grad(set_to_none=True)
+            loss  = loss_fn(model(X_b, task_ids), y_b)
             total = loss + model.compute_l2(L2_SHARED, L2_TASK)
             if torch.isnan(total):
                 raise ValueError(f"NaN at epoch {epoch+1} [{label_type.upper()}]")
@@ -102,15 +104,15 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
                         {'params': model.task_specific_parameters(), 'lr': tk_lr},
                     ])
                     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
-                    loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+                    loss_fn = nn.BCEWithLogitsLoss()
 
                     for _ in range(EPOCHS):
                         model.train()
                         run = 0.0
                         for batch in loader:
-                            X_b, y_b, tids, _ = [b.to(device) for b in batch]
-                            opt.zero_grad()
-                            total = (loss_fn(model(X_b, tids), y_b).mean()
+                            X_b, y_b, tids, _ = [b.to(device, non_blocking=True) for b in batch]
+                            opt.zero_grad(set_to_none=True)
+                            total = (loss_fn(model(X_b, tids), y_b)
                                      + model.compute_l2(L2_SHARED, l2))
                             total.backward()
                             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
@@ -128,8 +130,8 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
                             y_v   = torch.tensor(
                                 y_ar_v if label_type == 'ar' else y_va_v,
                                 dtype=torch.float32).unsqueeze(1)
-                            X_vt  = torch.tensor(X_v, dtype=torch.float32).to(device)
-                            tids  = torch.full((len(X_v),), task_idx, dtype=torch.long).to(device)
+                            X_vt  = torch.tensor(X_v, dtype=torch.float32).to(device, non_blocking=True)
+                            tids  = torch.full((len(X_v),), task_idx, dtype=torch.long).to(device, non_blocking=True)
                             pred  = (torch.sigmoid(model(X_vt, tids)) > 0.5).float().cpu()
                             tp   += (y_v * pred).sum().item()
                             fp   += ((1-y_v)*pred).sum().item()
@@ -157,6 +159,8 @@ def hyperparameter_tuning(label_type, shared_lrs, task_lrs, l2_lambdas_task):
 # MAIN
 # =============================
 if __name__ == '__main__':
+    experiment_t0 = time.time()
+
     best_sh_ar, best_tk_ar, best_l2_ar = hyperparameter_tuning('ar', [MTL_SHARED_LR], [MTL_TASK_LR], [L2_TASK])
     best_sh_va, best_tk_va, best_l2_va = hyperparameter_tuning('va', [MTL_SHARED_LR], [MTL_TASK_LR], [L2_TASK])
 
@@ -168,11 +172,15 @@ if __name__ == '__main__':
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
+    train_t0 = time.time()
     model_ar = _train_mtl('ar', best_sh_ar, best_tk_ar, train_data)
+    print(f"  AR training complete in {time.time() - train_t0:.1f}s")
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
+    train_t0 = time.time()
     model_va = _train_mtl('va', best_sh_va, best_tk_va, train_data)
+    print(f"  VA training complete in {time.time() - train_t0:.1f}s")
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = evaluate_mtl_all(model_ar, model_va, test_data,
@@ -189,3 +197,4 @@ if __name__ == '__main__':
                      'per_participant_table': results_df,
                      **ar_stds, **va_stds}, f)
     print(f"\nAll results saved to: {OUTPUT_DIR}")
+    print(f"Total experiment time: {time.time() - experiment_t0:.1f}s")

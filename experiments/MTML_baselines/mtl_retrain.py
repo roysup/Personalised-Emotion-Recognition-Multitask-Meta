@@ -14,6 +14,7 @@ from config import (HARDCODED_SPLITS, SEED, MAX_NORM, RETRAIN_LR,
                     L2_SHARED, L2_TASK, TEST_PARTICIPANTS)
 
 import gc
+import time
 import numpy as np
 import pickle
 import torch
@@ -38,6 +39,8 @@ os.makedirs(model_dir,  exist_ok=True)
 learning_rates = [RETRAIN_LR]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if device.type == 'cuda':
+    torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
 set_all_seeds(SEED)
 
@@ -97,8 +100,8 @@ def _train_fold(model, loader, lr, epochs):
     for ep in range(epochs):
         model.train(); run = 0.0
         for Xb, yb, tids, _ in loader:
-            Xb, yb, tids = Xb.to(device), yb.to(device), tids.to(device)
-            opt.zero_grad()
+            Xb, yb, tids = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True), tids.to(device, non_blocking=True)
+            opt.zero_grad(set_to_none=True)
             loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean()
                     + model.compute_l2(L2_SHARED, L2_TASK))
             if torch.isnan(loss):
@@ -114,7 +117,7 @@ def _eval_fold(model, loader):
     model.eval(); preds, labels = [], []
     with torch.no_grad():
         for Xb, yb, tids, _ in loader:
-            Xb, tids = Xb.to(device), tids.to(device)
+            Xb, tids = Xb.to(device, non_blocking=True), tids.to(device, non_blocking=True)
             pr = (torch.sigmoid(model(Xb, tids)) > 0.5).int().cpu().numpy().flatten()
             preds.extend(pr)
             labels.extend(yb.int().numpy().flatten())
@@ -134,8 +137,8 @@ def train_final(loader, lr, label_type, local_map):
     for ep in range(1, EPOCHS + 1):
         model.train(); run = 0.0; preds, labels_list = [], []
         for Xb, yb, tids, _ in loader:
-            Xb, yb, tids = Xb.to(device), yb.to(device), tids.to(device)
-            opt.zero_grad()
+            Xb, yb, tids = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True), tids.to(device, non_blocking=True)
+            opt.zero_grad(set_to_none=True)
             loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean()
                     + model.compute_l2(L2_SHARED, L2_TASK))
             if torch.isnan(loss):
@@ -219,6 +222,8 @@ def _get_local_idx(uid, local_map):
 # MAIN
 # =============================
 if __name__ == '__main__':
+    experiment_t0 = time.time()
+
     best_lr_ar = hyperparameter_tuning('ar')
     best_lr_va = hyperparameter_tuning('va')
 
@@ -238,11 +243,15 @@ if __name__ == '__main__':
     tr_loader_va, _, va_map = make_combined_loader(retrain_tasks, all_users, 'va', 'FINAL-va')
 
     print('\n' + '='*60 + '\nTRAINING FINAL AR\n' + '='*60)
+    train_t0 = time.time()
     model_ar = train_final(tr_loader_ar, best_lr_ar, 'ar', ar_map)
+    print(f"  AR training complete in {time.time() - train_t0:.1f}s")
     torch.save(model_ar.state_dict(), os.path.join(model_dir, 'mtl_final_best_ar.pt'))
 
     print('\n' + '='*60 + '\nTRAINING FINAL VA\n' + '='*60)
+    train_t0 = time.time()
     model_va = train_final(tr_loader_va, best_lr_va, 'va', va_map)
+    print(f"  VA training complete in {time.time() - train_t0:.1f}s")
     torch.save(model_va.state_dict(), os.path.join(model_dir, 'mtl_final_best_va.pt'))
 
     model_ar.eval(); model_va.eval()
@@ -254,7 +263,7 @@ if __name__ == '__main__':
                 user_frames[uid]['test'], WINDOW_SIZE, STRIDE, task_id=0)
             if X.shape[0] == 0:
                 continue
-            X_t   = torch.tensor(X, dtype=torch.float32).to(device)
+            X_t   = torch.tensor(X, dtype=torch.float32).to(device, non_blocking=True)
             li_ar = _get_local_idx(uid, ar_map)
             li_va = _get_local_idx(uid, va_map)
             if li_ar is None or li_va is None:
@@ -320,3 +329,4 @@ if __name__ == '__main__':
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")
+    print(f"Total experiment time: {time.time() - experiment_t0:.1f}s")

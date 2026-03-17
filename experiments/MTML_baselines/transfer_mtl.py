@@ -15,6 +15,7 @@ from config import (HARDCODED_SPLITS, SEED, MAX_NORM,
 
 import gc
 import copy
+import time
 import numpy as np
 import pickle
 import torch
@@ -44,6 +45,8 @@ learning_rates_pt = [TRANSFER_MTL_LR_PT]
 learning_rates_ft = [TRANSFER_MTL_LR_FT]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if device.type == 'cuda':
+    torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
 set_all_seeds(SEED)
 
@@ -105,8 +108,8 @@ def pretrain_mtl(loader, local_map, lr, label_type):
     for ep in range(1, EPOCHS + 1):
         model.train(); run = 0.0
         for Xb, yb, tids, _ in loader:
-            Xb, yb, tids = Xb.to(device), yb.to(device), tids.to(device)
-            opt.zero_grad()
+            Xb, yb, tids = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True), tids.to(device, non_blocking=True)
+            opt.zero_grad(set_to_none=True)
             loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean()
                     + model.compute_l2(L2_SHARED, L2_TASK))
             if torch.isnan(loss):
@@ -150,9 +153,9 @@ def finetune_user(base_model, X, y, lr, pid):
     for ep in range(FT_EPOCHS):
         model.train(); run = 0.0
         for Xb, yb in loader:
-            Xb, yb = Xb.to(device), yb.to(device)
+            Xb, yb = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
             tids   = torch.full((Xb.size(0),), local_idx, dtype=torch.long, device=device)
-            opt.zero_grad()
+            opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(Xb, tids), yb)
             if torch.isnan(loss):
                 return None, None
@@ -174,7 +177,7 @@ def eval_user(model, local_idx, X, y):
     with torch.no_grad():
         for Xb, yb in loader:
             tids_b = torch.full((Xb.size(0),), local_idx, dtype=torch.long, device=device)
-            probs.extend(torch.sigmoid(model(Xb.to(device), tids_b))
+            probs.extend(torch.sigmoid(model(Xb.to(device, non_blocking=True), tids_b))
                          .cpu().numpy().flatten())
             labels.extend(yb.numpy().flatten())
     y_true = np.array(labels).astype(int)
@@ -250,6 +253,8 @@ def hyperparameter_tuning(label_type='ar'):
 # MAIN
 # =============================
 if __name__ == '__main__':
+    experiment_t0 = time.time()
+
     best_lr_pt_ar, best_lr_ft_ar = hyperparameter_tuning('ar')
     best_lr_pt_va, best_lr_ft_va = hyperparameter_tuning('va')
 
@@ -261,13 +266,17 @@ if __name__ == '__main__':
     print('\n' + '='*60 + '\nPRETRAINING FINAL AR MTL\n' + '='*60)
     loader_ar, _, map_ar = make_combined_loader(tr_tasks, train_participants, 'ar', 'FINAL-ar')
     set_all_seeds(SEED)
+    train_t0 = time.time()
     base_ar = pretrain_mtl(loader_ar, map_ar, best_lr_pt_ar, 'ar')
+    print(f"  AR pretraining complete in {time.time() - train_t0:.1f}s")
     torch.save(base_ar.state_dict(), os.path.join(model_dir, 'base_model_ar_final.pth'))
 
     print('\n' + '='*60 + '\nPRETRAINING FINAL VA MTL\n' + '='*60)
     loader_va, _, map_va = make_combined_loader(tr_tasks, train_participants, 'va', 'FINAL-va')
     set_all_seeds(SEED)
+    train_t0 = time.time()
     base_va = pretrain_mtl(loader_va, map_va, best_lr_pt_va, 'va')
+    print(f"  VA pretraining complete in {time.time() - train_t0:.1f}s")
     torch.save(base_va.state_dict(), os.path.join(model_dir, 'base_model_va_final.pth'))
 
     results_ar, results_va = [], []
@@ -335,3 +344,4 @@ if __name__ == '__main__':
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")
+    print(f"Total experiment time: {time.time() - experiment_t0:.1f}s")

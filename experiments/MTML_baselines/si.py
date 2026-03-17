@@ -2,7 +2,7 @@
 Subject-Independent (SI) Baseline
 Train on 20 participants, evaluate on 6 held-out test participants.
 """
-import os, sys
+import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
@@ -25,6 +25,8 @@ learning_rates = [MTL_SHARED_LR]
 l2_lambdas     = [L2_TASK]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if device.type == 'cuda':
+    torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
 
 set_all_seeds(SEED)
@@ -45,24 +47,22 @@ print(f"Train: {train_participants}\nTest:  {test_participants}")
 
 def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
     model   = SingleTaskModel().to(device)
-    opt     = optim.Adam(model.parameters(), lr=lr)
+    opt     = optim.Adam(model.parameters(), lr=lr, weight_decay=l2_lambda)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
-    loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+    loss_fn = nn.BCEWithLogitsLoss()
     loader  = arrays_to_loader(frames, labels, BATCH_SIZE, shuffle=True, seed=SEED)
     for epoch in range(epochs):
         model.train()
         run = 0.0
         for X_b, y_b in loader:
-            X_b, y_b = X_b.to(device), y_b.to(device)
-            opt.zero_grad()
-            loss  = loss_fn(model(X_b), y_b).mean()
-            l2    = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
-            total = loss + l2
-            if torch.isnan(total):
+            X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
+            opt.zero_grad(set_to_none=True)
+            loss = loss_fn(model(X_b), y_b)
+            if torch.isnan(loss):
                 return None
-            total.backward()
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
-            opt.step(); run += total.item()
+            opt.step(); run += loss.item()
         sched.step(run / len(loader))
     return model
 
@@ -102,7 +102,7 @@ def hyperparameter_tuning(label_type='AR'):
                 loader = arrays_to_loader(Xva, yva, BATCH_SIZE, shuffle=False)
                 with torch.no_grad():
                     for X_v, y_v in loader:
-                        f1m.update_state(y_v.to(device), model(X_v.to(device)))
+                        f1m.update_state(y_v.to(device, non_blocking=True), model(X_v.to(device, non_blocking=True)))
                 fold_f1s.append(f1m.result())
                 print(f"  fold {fold_i+1}: f1={fold_f1s[-1]:.4f}")
             avg = np.mean(fold_f1s)
@@ -140,7 +140,7 @@ def evaluate_per_participant(model, test_participants, test_data, label_type):
         probs, trues = [], []
         with torch.no_grad():
             for X_b, y_b in loader:
-                probs.extend(torch.sigmoid(model(X_b.to(device))).cpu().numpy().flatten())
+                probs.extend(torch.sigmoid(model(X_b.to(device, non_blocking=True))).cpu().numpy().flatten())
                 trues.extend(y_b.numpy().flatten())
         y_true = np.array(trues).astype(int)
         y_prob = np.array(probs)
@@ -166,6 +166,8 @@ def evaluate_per_participant(model, test_participants, test_data, label_type):
 # MAIN
 # =============================
 if __name__ == '__main__':
+    experiment_t0 = time.time()
+
     best_lr_ar, best_l2_ar = hyperparameter_tuning('AR')
     best_lr_va, best_l2_va = hyperparameter_tuning('VA')
 
@@ -180,14 +182,18 @@ if __name__ == '__main__':
     Xtr_ar, ytr_ar, _, _, _ = create_sliding_windows(
         train_data, WINDOW_SIZE, STRIDE, trial_col='trial_global')
     set_all_seeds(SEED)
+    train_t0 = time.time()
     model_ar = train_model(Xtr_ar, ytr_ar, best_lr_ar, best_l2_ar)
+    print(f"  AR training complete in {time.time() - train_t0:.1f}s")
     torch.save(model_ar.state_dict(), os.path.join(output_dir, 'model_ar_si.pth'))
 
     print('\n' + '='*60 + '\nTRAINING VA\n' + '='*60)
     Xtr_va, _, ytr_va, _, _ = create_sliding_windows(
         train_data, WINDOW_SIZE, STRIDE, trial_col='trial_global')
     set_all_seeds(SEED)
+    train_t0 = time.time()
     model_va = train_model(Xtr_va, ytr_va, best_lr_va, best_l2_va)
+    print(f"  VA training complete in {time.time() - train_t0:.1f}s")
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'model_va_si.pth'))
 
     print('\n' + '='*60 + '\nEVALUATION AR\n' + '='*60)
@@ -239,3 +245,4 @@ if __name__ == '__main__':
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")
+    print(f"Total experiment time: {time.time() - experiment_t0:.1f}s")

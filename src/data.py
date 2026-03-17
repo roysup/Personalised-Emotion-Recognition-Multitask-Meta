@@ -244,9 +244,11 @@ def arrays_to_loader(X, y, batch_size, shuffle, seed=42):
     X_t = torch.tensor(X.astype('float32'))
     y_t = torch.tensor(y.astype('float32')).reshape(-1, 1)
     ds  = TensorDataset(X_t, y_t)
+    pin = torch.cuda.is_available()
     if shuffle:
         g = torch.Generator()
         g.manual_seed(seed)
         return DataLoader(ds, batch_size=batch_size, shuffle=True,
-                          num_workers=0, generator=g)
-    return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0)
+                          num_workers=0, generator=g, pin_memory=pin)
+    return DataLoader(ds, batch_size=batch_size, shuffle=False,
+                      num_workers=0, pin_memory=pin)

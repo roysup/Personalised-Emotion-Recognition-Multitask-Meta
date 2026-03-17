@@ -3,7 +3,7 @@ Reptile Meta-MTL — MI-Guided Multi-Task Episodes
 Uses mutual information between participant physiological-affective signatures
 to select episodes with a mix of similar and diverse tasks.
 """
-import os, sys
+import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
@@ -23,6 +23,8 @@ output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_ReptileMeta_MI_episode')
 os.makedirs(output_dir, exist_ok=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if device.type == 'cuda':
+    torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
 set_all_seeds(SEED)
 
@@ -125,17 +127,23 @@ def reptile_train_mi(train_users, label_type, seed):
 # MAIN
 # =============================
 if __name__ == '__main__':
+    experiment_t0 = time.time()
+
     train_users = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in train_participants}
     test_users  = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in test_participants}
 
     print('\n' + '='*60 + '\nTRAINING FINAL AR\n' + '='*60)
     set_all_seeds(SEED)
+    train_t0 = time.time()
     model_ar = reptile_train_mi(train_users, 'ar', SEED)
+    print(f"  AR training complete in {time.time() - train_t0:.1f}s")
     torch.save(model_ar.state_dict(), os.path.join(output_dir, 'reptile_mi_model_ar_final.pth'))
 
     print('\n' + '='*60 + '\nTRAINING FINAL VA\n' + '='*60)
     set_all_seeds(SEED)
+    train_t0 = time.time()
     model_va = reptile_train_mi(train_users, 'va', SEED)
+    print(f"  VA training complete in {time.time() - train_t0:.1f}s")
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'reptile_mi_model_va_final.pth'))
 
     results_ar, results_va = [], []
@@ -187,3 +195,4 @@ if __name__ == '__main__':
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")
+    print(f"Total experiment time: {time.time() - experiment_t0:.1f}s")

@@ -5,7 +5,7 @@ to remove conflicting components before being averaged and applied.
 Task-head gradients come from the normal backward pass.
 Seed is reset before AR training and again before VA training.
 """
-import os, sys
+import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
@@ -23,6 +23,8 @@ OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_pcgrad_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if device.type == 'cuda':
+    torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
 
 set_all_seeds(SEED)
@@ -95,7 +97,7 @@ def _train_pcgrad(label_type, lr_shared, lr_task, train_data_dict):
         model.train()
         running = 0.0
         for batch in loader:
-            X_b, y_b, task_ids, _ = [b.to(device) for b in batch]
+            X_b, y_b, task_ids, _ = [b.to(device, non_blocking=True) for b in batch]
             opt.zero_grad(set_to_none=True)
             total = _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids)
 
@@ -121,6 +123,8 @@ def _train_pcgrad(label_type, lr_shared, lr_task, train_data_dict):
 # MAIN
 # =============================
 if __name__ == '__main__':
+    experiment_t0 = time.time()
+
     train_data, test_data = {}, {}
     for task_idx, pid in enumerate(participant_ids):
         p_df = df[df['ID'] == pid].reset_index(drop=True)
@@ -129,11 +133,15 @@ if __name__ == '__main__':
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
+    train_t0 = time.time()
     model_ar = _train_pcgrad('ar', MTL_SHARED_LR, MTL_TASK_LR, train_data)
+    print(f"  AR training complete in {time.time() - train_t0:.1f}s")
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
+    train_t0 = time.time()
     model_va = _train_pcgrad('va', MTL_SHARED_LR, MTL_TASK_LR, train_data)
+    print(f"  VA training complete in {time.time() - train_t0:.1f}s")
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = evaluate_mtl_all(model_ar, model_va, test_data,
@@ -150,3 +158,4 @@ if __name__ == '__main__':
                      'per_participant_table': results_df,
                      **ar_stds, **va_stds}, f)
     print(f"\nAll results saved to: {OUTPUT_DIR}")
+    print(f"Total experiment time: {time.time() - experiment_t0:.1f}s")

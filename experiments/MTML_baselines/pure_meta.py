@@ -1,7 +1,7 @@
 """
 Pure Meta-Learning — Reptile with single-task episodes, single shared model (no task heads).
 """
-import os, sys
+import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
@@ -25,6 +25,8 @@ inner_steps_grid = [INNER_STEPS]
 inner_lr_grid    = [INNER_LR]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if device.type == 'cuda':
+    torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
 set_all_seeds(SEED)
 
@@ -44,17 +46,15 @@ print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
 # =============================
 def adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2_lambda):
     adapted = copy.deepcopy(model).to(device); adapted.train()
-    opt     = optim.Adam(adapted.parameters(), lr=inner_lr)
+    opt     = optim.Adam(adapted.parameters(), lr=inner_lr, weight_decay=l2_lambda)
     sched   = ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
     for step in range(inner_steps):
         ep_loss = 0.0; nb = 0
         for Xb, yb in sup_loader:
-            Xb, yb = Xb.to(device), yb.to(device)
-            opt.zero_grad()
+            Xb, yb = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
+            opt.zero_grad(set_to_none=True)
             loss = loss_fn(adapted(Xb), yb)
-            l2   = l2_lambda * sum(p.norm(2)**2 for p in adapted.parameters() if p.requires_grad)
-            loss = loss + l2
             if not torch.isnan(loss):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(adapted.parameters(), MAX_NORM)
@@ -113,7 +113,7 @@ def hyperparameter_tuning(label_type='ar'):
                             adapted.eval(); probs, labels = [], []
                             with torch.no_grad():
                                 for Xb, yb in q_loader:
-                                    probs.extend(torch.sigmoid(adapted(Xb.to(device))).cpu().numpy().flatten())
+                                    probs.extend(torch.sigmoid(adapted(Xb.to(device, non_blocking=True))).cpu().numpy().flatten())
                                     labels.extend(yb.numpy().flatten())
                             if labels:
                                 val_f1s.append(f1_score(np.array(labels).astype(int),
@@ -139,6 +139,8 @@ def hyperparameter_tuning(label_type='ar'):
 # MAIN
 # =============================
 if __name__ == '__main__':
+    experiment_t0 = time.time()
+
     bms_ar, bmlr_ar, bisp_ar, bilr_ar = hyperparameter_tuning('ar')
     bms_va, bmlr_va, bisp_va, bilr_va = hyperparameter_tuning('va')
 
@@ -148,14 +150,18 @@ if __name__ == '__main__':
     print('\n' + '='*60 + '\nTRAINING FINAL AR\n' + '='*60)
     set_all_seeds(SEED)
     model_ar = SingleTaskModel().to(device)
+    train_t0 = time.time()
     model_ar = reptile_train(model_ar, train_users_ar, bms_ar, bmlr_ar, bisp_ar, bilr_ar, L2_LAMBDA, 'ar', SEED)
+    print(f"  AR training complete in {time.time() - train_t0:.1f}s")
     torch.save(model_ar.state_dict(), os.path.join(output_dir, 'meta_model_ar_final.pth'))
 
     print('\n' + '='*60 + '\nTRAINING FINAL VA\n' + '='*60)
     set_all_seeds(SEED)
     train_users_va = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in train_participants}
     model_va = SingleTaskModel().to(device)
+    train_t0 = time.time()
     model_va = reptile_train(model_va, train_users_va, bms_va, bmlr_va, bisp_va, bilr_va, L2_LAMBDA, 'va', SEED)
+    print(f"  VA training complete in {time.time() - train_t0:.1f}s")
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'meta_model_va_final.pth'))
 
     results_ar, results_va = [], []
@@ -171,7 +177,7 @@ if __name__ == '__main__':
             adapted.eval(); probs, labels_list = [], []
             with torch.no_grad():
                 for Xb, yb in q_loader:
-                    probs.extend(torch.sigmoid(adapted(Xb.to(device))).cpu().numpy().flatten())
+                    probs.extend(torch.sigmoid(adapted(Xb.to(device, non_blocking=True))).cpu().numpy().flatten())
                     labels_list.extend(yb.numpy().flatten())
             y_true = np.array(labels_list).astype(int)
             y_prob = np.array(probs)
@@ -228,3 +234,4 @@ if __name__ == '__main__':
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")
+    print(f"Total experiment time: {time.time() - experiment_t0:.1f}s")
