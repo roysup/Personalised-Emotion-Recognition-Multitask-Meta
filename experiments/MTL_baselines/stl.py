@@ -99,7 +99,6 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
                     y_tr     = y_ar_tr if label_type == 'ar' else y_va_tr
                     y_va_lbl = y_ar_va if label_type == 'ar' else y_va_va
 
-                    #set_all_seeds(SEED)
                     model   = SingleTaskModel().to(device)
                     opt     = optim.Adam(model.parameters(), lr=lr, weight_decay=l2)
                     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
