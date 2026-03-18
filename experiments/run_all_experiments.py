@@ -11,7 +11,7 @@ import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Ordered list of experiment scripts to run (pstl.py excluded — already run)
+# Ordered list of experiment scripts to run
 EXPERIMENTS = [
     # MTL Baselines
     ('MTL_baselines', 'pstl.py'),
@@ -20,7 +20,6 @@ EXPERIMENTS = [
     ('MTL_baselines', 'mtl_pcgrad.py'),
     ('MTL_baselines', 'mtl_uw.py'),
     # MTML Baselines
-    #('MTML_baselines', 'stl.py'),
     ('MTML_baselines', 'si.py'),
     ('MTML_baselines', 'tlft.py'),
     ('MTML_baselines', 'transfer_mtl.py'),

@@ -44,7 +44,6 @@ test_participants  = list(TEST_PARTICIPANTS)
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {train_participants}\nTest:  {test_participants}")
 
-
 # =============================
 # HELPERS
 # =============================
@@ -52,7 +51,6 @@ def _get_windows(sub_df, label_type):
     X, y_ar, y_va, _, _ = create_sliding_windows(
         sub_df, WINDOW_SIZE, STRIDE, trial_col='participant_trial_encoded')
     return X, (y_ar if label_type.upper() == 'AR' else y_va)
-
 
 def pretrain(X, y, lr, l2_lambda, epochs):
     model   = SingleTaskModel().to(device)
@@ -73,7 +71,6 @@ def pretrain(X, y, lr, l2_lambda, epochs):
             opt.step(); run += loss.item()
         sched.step(run / len(loader))
     return model
-
 
 def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
     model = SingleTaskModel().to(device)
@@ -96,7 +93,6 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
         sched.step(run / len(loader))
     return model
 
-
 def eval_model(model, X, y):
     """Generic per-participant evaluation — returns unprefixed keys."""
     model.eval()
@@ -114,7 +110,6 @@ def eval_model(model, X, y):
     return {'y_true': y_true, 'y_pred': y_pred, 'y_pred_probs': y_prob,
             'cm': cm, 'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1}
 
-
 def _prefix_result(r_raw, pid, label):
     """Convert an eval_model dict to the prefixed MTML key convention."""
     p = label.lower()
@@ -129,7 +124,6 @@ def _prefix_result(r_raw, pid, label):
         f'y_pred_{p}':          r_raw['y_pred'],
         f'y_pred_probs_{p}':    r_raw['y_pred_probs'],
     }
-
 
 # =============================
 # HYPERPARAMETER TUNING
@@ -187,7 +181,6 @@ def hyperparameter_tuning(label_type='AR'):
     with open(os.path.join(output_dir, f'{label_type.lower()}_tuning_results_tlft.pkl'), 'wb') as f:
         pickle.dump({'all': results, 'best': best}, f)
     return best['lr_pre'], best['lr_ft'], best['l2']
-
 
 # =============================
 # MAIN

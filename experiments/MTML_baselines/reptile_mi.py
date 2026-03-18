@@ -38,7 +38,6 @@ test_participants  = list(TEST_PARTICIPANTS)
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
 
-
 # =============================
 # MI SIGNATURE AND MATRIX
 # =============================
@@ -50,7 +49,6 @@ def _digitize(x, n_bins=16):
     bins = np.linspace(lo, hi, n_bins + 1)
     return np.digitize(x, bins[1:-1], right=False).astype(int)
 
-
 def _task_signature(task_df, label_type, splits, uid, max_pts=20000):
     train_df = task_df[task_df['Trial'].isin(splits[uid]['train'])]
     if len(train_df) > max_pts:
@@ -60,7 +58,6 @@ def _task_signature(task_df, label_type, splits, uid, max_pts=20000):
     gsr = _digitize(train_df['GSR'].values)
     y   = train_df['AR_Rating' if label_type=='ar' else 'VA_Rating'].astype(int).values
     return np.stack([ecg, gsr, y], axis=1).astype(int)
-
 
 def build_mi_matrix(tasks_data, label_type, splits):
     uids = sorted(tasks_data.keys())
@@ -79,7 +76,6 @@ def build_mi_matrix(tasks_data, label_type, splits):
             mi[ui][uj] = float(v); mi[uj][ui] = float(v)
     return mi
 
-
 def mi_guided_episode(task_ids, mi_matrix, rng, size=5, n_sim=2, n_div=2):
     task_ids = list(task_ids)
     if len(task_ids) <= size: return task_ids
@@ -96,7 +92,6 @@ def mi_guided_episode(task_ids, mi_matrix, rng, size=5, n_sim=2, n_div=2):
     if needed and unused:
         selected += list(rng.choice(unused, min(needed, len(unused)), replace=False))
     return selected[:size]
-
 
 # =============================
 # META TRAINING — MI-GUIDED EPISODES
@@ -121,7 +116,6 @@ def reptile_train_mi(train_users, label_type, seed):
             adapted_bases.append(adapted_base)
         reptile_outer_update(base, adapted_bases, META_LR)
     return base
-
 
 # =============================
 # MAIN

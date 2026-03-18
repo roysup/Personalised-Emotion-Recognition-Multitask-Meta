@@ -40,7 +40,6 @@ test_participants  = list(TEST_PARTICIPANTS)
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
 
-
 # =============================
 # META TRAINING — SINGLE TASK EPISODES
 # =============================
@@ -61,7 +60,6 @@ def reptile_train_st(train_users, meta_steps, meta_lr, inner_steps, inner_lr,
         heads[uid] = adapted_head
         reptile_outer_update(base, [adapted_base], meta_lr)
     return base
-
 
 # =============================
 # HYPERPARAMETER TUNING
@@ -103,7 +101,6 @@ def hyperparameter_tuning(label_type='ar'):
     with open(os.path.join(output_dir, f'{label_type}_tuning.pkl'), 'wb') as f:
         pickle.dump({'all': results, 'best': best}, f)
     return best['ms'], best['mlr'], best['isp'], best['ilr']
-
 
 # =============================
 # MAIN

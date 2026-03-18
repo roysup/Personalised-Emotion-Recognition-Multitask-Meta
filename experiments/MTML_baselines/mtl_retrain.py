@@ -54,7 +54,6 @@ test_participants  = list(TEST_PARTICIPANTS)
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
 
-
 # =============================
 # LOADER BUILDER
 # =============================
@@ -89,7 +88,6 @@ def make_combined_loader(tasks_dict, user_list, label_type, split='train'):
     print(f"[{split}/{label_type}] users={len(local_map)} samples={len(dataset)}")
     return loader, len(dataset), local_map
 
-
 # =============================
 # TRAINING HELPERS
 # =============================
@@ -112,7 +110,6 @@ def _train_fold(model, loader, lr, epochs):
         sched.step(run / max(1, len(loader)))
     return model
 
-
 def _eval_fold(model, loader):
     model.eval(); preds, labels = [], []
     with torch.no_grad():
@@ -122,7 +119,6 @@ def _eval_fold(model, loader):
             preds.extend(pr)
             labels.extend(yb.int().numpy().flatten())
     return f1_score(labels, preds, average='macro', zero_division=0)
-
 
 def train_final(loader, lr, label_type, local_map):
     """Train the final model on all participants (train + test) for evaluation."""
@@ -161,7 +157,6 @@ def train_final(loader, lr, label_type, local_map):
 
     model.load_state_dict(best_state)
     return model
-
 
 # =============================
 # HYPERPARAMETER TUNING
@@ -207,7 +202,6 @@ def hyperparameter_tuning(label_type='ar'):
         pickle.dump({'all': results, 'best': best}, f)
     return best['lr']
 
-
 # =============================
 # LOCAL INDEX LOOKUP
 # =============================
@@ -216,7 +210,6 @@ def _get_local_idx(uid, local_map):
         if ru == uid:
             return li
     return None
-
 
 # =============================
 # MAIN

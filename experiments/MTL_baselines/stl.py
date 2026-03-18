@@ -64,7 +64,6 @@ def _train_participant(task_idx, label_type, lr, l2_lambda, train_videos, partic
         sched.step(running / len(loader))
     return model
 
-
 # =============================
 # HYPERPARAMETER TUNING
 # =============================

@@ -48,7 +48,6 @@ def _make_pool_loader(data_df, label_type, shuffle):
     y = y_ar if label_type == 'ar' else y_va
     return arrays_to_loader(X, y, BATCH_SIZE, shuffle=shuffle, seed=SEED)
 
-
 def _train_single(label_type, lr, l2_lambda):
     #set_all_seeds(SEED)
     model   = SingleTaskModel().to(device)

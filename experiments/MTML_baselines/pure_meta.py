@@ -40,7 +40,6 @@ test_participants  = list(TEST_PARTICIPANTS)
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
 
-
 # =============================
 # INNER LOOP
 # =============================
@@ -63,11 +62,9 @@ def adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2_lambda):
         if nb > 0: sched.step(ep_loss / nb)
     return adapted
 
-
 def make_sup_q_loader(df_user, splits, uid, ar_or_va, seed=SEED):
     return build_support_query(df_user, splits[uid]['train'], splits[uid]['test'],
                                ar_or_va, seed=seed, window_size=WINDOW_SIZE, stride=STRIDE)
-
 
 # =============================
 # META TRAINING
@@ -82,7 +79,6 @@ def reptile_train(model, train_users, meta_steps, meta_lr, inner_steps, inner_lr
         adapted = adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2)
         reptile_outer_update(model, [adapted], meta_lr)
     return model
-
 
 # =============================
 # HYPERPARAMETER TUNING
@@ -133,7 +129,6 @@ def hyperparameter_tuning(label_type='ar'):
     with open(os.path.join(output_dir, f'{label_type}_tuning.pkl'), 'wb') as f:
         pickle.dump({'all': results, 'best': best}, f)
     return best['ms'], best['mlr'], best['isp'], best['ilr']
-
 
 # =============================
 # MAIN

@@ -59,7 +59,6 @@ test_participants  = list(TEST_PARTICIPANTS)
 train_participants = sorted([p for p in participant_ids if p not in test_participants])
 print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
 
-
 # =============================
 # LOADER BUILDER
 # =============================
@@ -91,7 +90,6 @@ def make_combined_loader(tasks_dict, user_list, label_type, split='train'):
     loader  = DataLoader(dataset, batch_size=len(local_map), sampler=sampler, num_workers=0)
     print(f"[{split}/{label_type}] users={len(local_map)} samples={len(dataset)}")
     return loader, len(dataset), local_map
-
 
 # =============================
 # TRAINING HELPERS
@@ -126,7 +124,6 @@ def pretrain_mtl(loader, local_map, lr, label_type):
 
     model.load_state_dict(best_state)
     return model
-
 
 def finetune_user(base_model, X, y, lr, pid):
     """
@@ -165,7 +162,6 @@ def finetune_user(base_model, X, y, lr, pid):
 
     return model, local_idx
 
-
 def eval_user(model, local_idx, X, y, label):
     """Evaluate fine-tuned model; returns prefixed result dict matching MTML convention."""
     model.eval()
@@ -196,7 +192,6 @@ def eval_user(model, local_idx, X, y, label):
         f'y_pred_{p}':          y_pred,
         f'y_pred_probs_{p}':    y_prob,
     }
-
 
 # =============================
 # HYPERPARAMETER TUNING
@@ -256,7 +251,6 @@ def hyperparameter_tuning(label_type='ar'):
     with open(os.path.join(output_dir, f'{label_type}_tuning_results_transfermtl.pkl'), 'wb') as f:
         pickle.dump({'all': results, 'best': best}, f)
     return best['lr_pt'], best['lr_ft']
-
 
 # =============================
 # MAIN

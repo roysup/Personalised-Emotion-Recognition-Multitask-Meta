@@ -66,7 +66,6 @@ def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
         sched.step(run / len(loader))
     return model
 
-
 # =============================
 # HYPERPARAMETER TUNING
 # =============================
@@ -112,7 +111,6 @@ def hyperparameter_tuning(label_type='AR'):
     with open(os.path.join(output_dir, f'{label_type.lower()}_tuning_results_si.pkl'), 'wb') as f:
         pickle.dump({'all': results, 'best': best}, f)
     return best['lr'], best['l2']
-
 
 # =============================
 # EVALUATION HELPER
@@ -160,7 +158,6 @@ def evaluate_per_participant(model, test_participants, test_data, label_type):
         })
         print(f"  Participant {pid}: Acc={acc:.4f} F1={f1:.4f}")
     return results
-
 
 # =============================
 # MAIN
