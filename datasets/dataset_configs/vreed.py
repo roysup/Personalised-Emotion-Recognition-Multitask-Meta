@@ -5,8 +5,8 @@ so no script needs to duplicate this boilerplate.
 
 Usage
 -----
-from dataset_configs.vreed import load_vreed_df, participant_ids, VREED_SPLITS
-df = load_vreed_df()
+from dataset_configs.vreed import load_vreed_df, participant_ids, HARDCODED_SPLITS
+df, participant_ids = load_vreed_df()
 """
 import sys
 import os
@@ -17,9 +17,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if os.path.join(_REPO_ROOT, 'src') not in sys.path:
     sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 
-from config import VREED_SPLITS, HARDCODED_SPLITS, CSV_PATH, PKL_PATH
+from config import HARDCODED_SPLITS, CSV_PATH, PKL_PATH
 
-participant_ids = sorted(VREED_SPLITS.keys())
+# Use the symlink created: ln -s "Phase A/data" data
+# CSV_PATH = os.path.join(_REPO_ROOT, 'data', 'VREED_data_v2.csv')
+# PKL_PATH = os.path.join(_REPO_ROOT, 'data', 'unique_id_trials_VREED_v2.pkl')
+
+participant_ids = sorted(HARDCODED_SPLITS.keys())
 
 def load_vreed_df(preserve_trial_order: bool = False,
                   mode: str = 'standard') -> pd.DataFrame:

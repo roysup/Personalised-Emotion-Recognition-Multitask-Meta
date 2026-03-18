@@ -1,6 +1,5 @@
 """
 Model definitions for all training scripts.
-All models accept input_dim (number of signal channels) — defaults to 2 for VREED.
 
 MTL_baselines
 -------------
@@ -13,6 +12,7 @@ MTML_baselines
 BaseFeatureExtractor  — shared CNN+LSTM backbone (MTML scripts)
 TaskHead              — per-participant dense head (MTML scripts)
 MTLTransferModel      — HPS backbone + Sequential task heads + add_task_head()
+                        (mtl_retrain.py, transfer_mtl.py)
 """
 import torch
 import torch.nn as nn
@@ -37,16 +37,12 @@ def _xavier_init(m):
 class SingleTaskModel(nn.Module):
     """
     Single-task CNN+LSTM model used by pstl.py and stl.py.
-    Input: (batch, n_channels, window_size) — permuted internally from (batch, window, channels).
+    Input: (batch, 2, window_size) — ECG + GSR channels.
     Output: (batch, 1) logit.
-
-    Parameters
-    ----------
-    input_dim : int — number of input channels (default 2 for VREED: ECG + GSR)
     """
-    def __init__(self, input_dim: int = 2):
+    def __init__(self):
         super().__init__()
-        self.conv1  = nn.Conv1d(input_dim, 128, kernel_size=2, padding=0)
+        self.conv1  = nn.Conv1d(2, 128, kernel_size=2, padding=0)
         self.bn1    = nn.BatchNorm1d(128)
         self.pool1  = nn.MaxPool1d(kernel_size=2, stride=2, padding=1)
         self.conv2  = nn.Conv1d(128, 64, kernel_size=1, padding=0)
@@ -81,15 +77,14 @@ class MTLModel(nn.Module):
 
     Parameters
     ----------
-    num_tasks : int — number of participants
-    input_dim : int — number of input channels (default 2)
+    num_tasks : int — number of participants (26 for VREED)
     """
-    def __init__(self, num_tasks: int, input_dim: int = 2):
+    def __init__(self, num_tasks: int):
         super().__init__()
         self.num_tasks = num_tasks
 
         # Shared layers
-        self.conv1 = nn.Conv1d(input_dim, 128, kernel_size=2, padding=0)
+        self.conv1 = nn.Conv1d(2, 128, kernel_size=2, padding=0)
         self.bn1   = nn.BatchNorm1d(128)
         self.pool1 = nn.MaxPool1d(kernel_size=2, stride=2, padding=1)
         self.conv2 = nn.Conv1d(128, 64, kernel_size=1, padding=0)
@@ -134,6 +129,7 @@ class MTLModel(nn.Module):
                 list(self.task_out.parameters()))
 
     def compute_l2(self, l2_shared: float = 0.0, l2_task: float = 1e-5) -> torch.Tensor:
+        """Return combined L2 regularisation for shared backbone and task heads."""
         ls = l2_shared * sum(p.norm(2) ** 2
                              for p in self.shared_parameters() if p.requires_grad)
         lt = l2_task   * sum(p.norm(2) ** 2
@@ -144,14 +140,14 @@ class MTLModel(nn.Module):
 class MTLModelUW(MTLModel):
     """
     MTLModel extended with per-task learnable log-uncertainty weights.
+    Used by mtl_uw.py.
 
-    Parameters
-    ----------
-    num_tasks : int
-    input_dim : int — number of input channels (default 2)
+    Extra attribute
+    ---------------
+    log_vars : nn.Parameter of shape (num_tasks,) — initialised to zeros
     """
-    def __init__(self, num_tasks: int, input_dim: int = 2):
-        super().__init__(num_tasks, input_dim)
+    def __init__(self, num_tasks: int):
+        super().__init__(num_tasks)
         self.log_vars = nn.Parameter(torch.zeros(num_tasks))
 
 
@@ -163,14 +159,10 @@ class BaseFeatureExtractor(nn.Module):
     """
     Shared CNN+LSTM backbone for MTML scripts (no task-specific heads).
     Output: (batch, 64) feature vector.
-
-    Parameters
-    ----------
-    input_dim : int — number of input channels (default 2)
     """
-    def __init__(self, input_dim: int = 2):
+    def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv1d(input_dim, 128, kernel_size=2, padding=0)
+        self.conv1 = nn.Conv1d(2, 128, kernel_size=2, padding=0)
         self.bn1   = nn.BatchNorm1d(128)
         self.pool1 = nn.MaxPool1d(kernel_size=2, stride=2, padding=1)
         self.conv2 = nn.Conv1d(128, 64, kernel_size=1, padding=0)
@@ -189,7 +181,11 @@ class BaseFeatureExtractor(nn.Module):
 
 
 class TaskHead(nn.Module):
-    """Per-participant dense head. Input: (batch, 64). Output: (batch, 1) logit."""
+    """
+    Per-participant dense head for MTML scripts.
+    Input: (batch, 64) from BaseFeatureExtractor.
+    Output: (batch, 1) logit.
+    """
     def __init__(self):
         super().__init__()
         self.dense1 = nn.Linear(64, 128)
@@ -210,16 +206,21 @@ class TaskHead(nn.Module):
 class MTLTransferModel(nn.Module):
     """
     Shared BaseFeatureExtractor backbone with per-participant Sequential task heads.
+    Used by mtl_retrain.py and transfer_mtl.py.
+
+    Compared to MTLModel this uses nn.Sequential heads (activation baked in)
+    and exposes compute_l2() and add_task_head() as methods.
+    add_task_head() enables extending the model to unseen participants at
+    fine-tuning time, which is the distinguishing use-case for both scripts.
 
     Parameters
     ----------
-    num_tasks : int
+    num_tasks : int — number of participants at construction time
     hidden    : int — backbone output width (default 64)
-    input_dim : int — number of input channels (default 2)
     """
-    def __init__(self, num_tasks: int, hidden: int = 64, input_dim: int = 2):
+    def __init__(self, num_tasks: int, hidden: int = 64):
         super().__init__()
-        self.backbone  = BaseFeatureExtractor(input_dim)
+        self.backbone  = BaseFeatureExtractor()
         self.head1     = nn.ModuleList(
             [nn.Sequential(nn.Linear(hidden, 128), nn.ReLU()) for _ in range(num_tasks)])
         self.head2     = nn.ModuleList(
@@ -251,6 +252,7 @@ class MTLTransferModel(nn.Module):
                 list(self.out.parameters()))
 
     def compute_l2(self, l2_shared: float = 0.0, l2_task: float = 1e-5) -> torch.Tensor:
+        """Return the combined L2 regularisation term for backbone and task heads."""
         ls = l2_shared * sum(p.norm(2) ** 2
                              for p in self.backbone_parameters() if p.requires_grad)
         lt = l2_task   * sum(p.norm(2) ** 2
@@ -258,9 +260,17 @@ class MTLTransferModel(nn.Module):
         return ls + lt
 
     def add_task_head(self) -> int:
+        """
+        Append a new task head for a previously unseen participant.
+        Used by transfer_mtl.py during per-test-participant fine-tuning.
+
+        Returns
+        -------
+        int — the local task index of the new head
+        """
         device = next(self.parameters()).device
         self.head1.append(nn.Sequential(nn.Linear(64, 128), nn.ReLU()).to(device))
         self.head2.append(nn.Sequential(nn.Linear(128, 64), nn.ReLU()).to(device))
         self.out.append(nn.Linear(64, 1).to(device))
         self.num_tasks += 1
-        return self.num_tasks - 1
+        return self.num_tasks - 1   # index of the newly added head

@@ -1,165 +1,349 @@
 """
-Transfer MTL — Pre-train MTL on train participants, then fine-tune
-both shared backbone AND a new task head per test participant.
-
-Usage
------
-    python transfer_mtl.py                  # runs on VREED (default)
-    python transfer_mtl.py --dataset dssn_eq
+Transfer-MTL — MTL pretrain on train participants, add new head per test participant, fine-tune.
 """
-import argparse
-import os, sys, time, copy
+import os
+import sys
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
-from config import (SEED, EPOCHS, MAX_NORM, FT_EPOCHS,
-                    MTL_SHARED_LR, MTL_TASK_LR,
+# config MUST be imported first — it sets CUBLAS/PYTHONHASHSEED before torch loads
+from config import (HARDCODED_SPLITS, SEED, MAX_NORM,
                     TRANSFER_MTL_LR_PT, TRANSFER_MTL_LR_FT,
-                    L2_SHARED, L2_TASK, RESULTS_DIR)
+                    L2_SHARED, L2_TASK, EPOCHS, FT_EPOCHS, PSTL_BATCH_SIZE,
+                    WINDOW_SIZE, STRIDE, N_FOLDS, TEST_PARTICIPANTS, RESULTS_DIR)
+
+import gc
+import copy
+import time
 import numpy as np
 import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from data import make_mtl_loader
-from dataset_configs.loader import load_dataset
-from models import MTLModel, BaseFeatureExtractor, TaskHead
-from utils import (set_all_seeds, aggregate_mtml_results,
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix
+from torch.utils.data import TensorDataset, DataLoader
+
+from utils import (set_all_seeds, compute_metrics_from_cm,
+                   make_kfolds, aggregate_mtml_results,
                    compute_per_participant_stds, print_determinism_summary)
-from training import evaluate_test_user
+from data import create_sliding_windows, BalancedSampler
+from models import MTLTransferModel
+from dataset_configs.vreed import load_vreed_df
 
+hardcoded_splits = HARDCODED_SPLITS
+BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
+output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_TransferMTL')
+model_dir        = os.path.join(output_dir, 'models')
+os.makedirs(output_dir, exist_ok=True)
+os.makedirs(model_dir,  exist_ok=True)
 
-def parse_args():
-    p = argparse.ArgumentParser(description='Transfer MTL')
-    p.add_argument('--dataset', type=str, default='vreed',
-                   choices=['vreed', 'dssn_eq', 'dssn_em'])
-    return p.parse_args()
+learning_rates_pt = [TRANSFER_MTL_LR_PT]
+learning_rates_ft = [TRANSFER_MTL_LR_FT]
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+set_all_seeds(SEED)
+if device.type == 'cuda':
+    torch.backends.cudnn.benchmark = True
+print(f"Device: {device}\nOutput: {output_dir}")
 
-def _pretrain_mtl(label_type, train_data_dict, cfg, device, output_dir):
-    """Pre-train MTL on train participants, return BaseFeatureExtractor."""
-    num_train = len(train_data_dict)
-    loader, _, _ = make_mtl_loader(
-        train_data_dict, cfg['window_size'], cfg['stride'],
-        label_type=label_type, batch_size=cfg['mtl_batch'], seed=SEED,
-        feature_cols=cfg['feature_cols'])
+# =============================
+# DATA
+# =============================
+df = load_vreed_df(mode='mtml')
 
-    model   = MTLModel(num_train, input_dim=cfg['input_dim']).to(device)
-    opt     = optim.Adam([
-        {'params': model.shared_parameters(),        'lr': TRANSFER_MTL_LR_PT},
-        {'params': model.task_specific_parameters(), 'lr': MTL_TASK_LR},
-    ])
+participant_ids   = sorted([p for p in df['ID'].unique() if p in hardcoded_splits])
+test_participants  = list(TEST_PARTICIPANTS)
+train_participants = sorted([p for p in participant_ids if p not in test_participants])
+print(f"Train: {len(train_participants)}  Test: {len(test_participants)}")
+
+# =============================
+# LOADER BUILDER
+# =============================
+def make_combined_loader(tasks_dict, user_list, label_type, split='train'):
+    all_X, all_y, all_tids, all_vids = [], [], [], []
+    local_map, spt = {}, {}
+    for lt, uid in enumerate(sorted(user_list)):
+        X, y_ar, y_va, tids, vids = create_sliding_windows(
+            tasks_dict[uid], WINDOW_SIZE, STRIDE, lt)
+        if X.shape[0] == 0:
+            continue
+        y = y_ar if label_type == 'ar' else y_va
+        all_X.append(X); all_y.append(y)
+        all_tids.append(tids); all_vids.append(vids)
+        local_map[lt] = uid; spt[lt] = X.shape[0]
+    if not all_X:
+        return (DataLoader(TensorDataset(torch.empty(0, WINDOW_SIZE, 2, dtype=torch.float32),
+                                         torch.empty(0, 1, dtype=torch.float32),
+                                         torch.empty(0, dtype=torch.long),
+                                         torch.empty(0, dtype=torch.long)),
+                           batch_size=1),
+                0, local_map)
+    X_arr = np.concatenate(all_X); y_arr = np.concatenate(all_y)
+    tids  = np.concatenate(all_tids); vids  = np.concatenate(all_vids)
+    X_t   = torch.tensor(X_arr, dtype=torch.float32)
+    y_t   = torch.tensor(y_arr, dtype=torch.float32).unsqueeze(1)
+    dataset = TensorDataset(X_t, y_t, torch.tensor(tids), torch.tensor(vids))
+    sampler = BalancedSampler(tids, list(local_map.keys()), spt, SEED)
+    loader  = DataLoader(dataset, batch_size=len(local_map), sampler=sampler, num_workers=0)
+    print(f"[{split}/{label_type}] users={len(local_map)} samples={len(dataset)}")
+    return loader, len(dataset), local_map
+
+# =============================
+# TRAINING HELPERS
+# =============================
+def pretrain_mtl(loader, local_map, lr, label_type):
+    model   = MTLTransferModel(len(local_map)).to(device)
+    opt     = optim.Adam(model.parameters(), lr=lr)
+    sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
+    loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+    best_loss  = float('inf')
+    best_state = None
+
+    for ep in range(1, EPOCHS + 1):
+        model.train(); run = 0.0
+        for Xb, yb, tids, _ in loader:
+            Xb, yb, tids = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True), tids.to(device, non_blocking=True)
+            opt.zero_grad(set_to_none=True)
+            loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean()
+                    + model.compute_l2(L2_SHARED, L2_TASK))
+            if torch.isnan(loss):
+                raise ValueError(f"NaN epoch {ep}")
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
+            opt.step(); run += loss.item()
+        avg = run / max(1, len(loader))
+        if ep % 5 == 0 or ep == 1:
+            print(f"  [{label_type.upper()}-PT] Epoch {ep} loss={avg:.4f}")
+        sched.step(avg)
+        if avg < best_loss:
+            best_loss  = avg
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+
+    model.load_state_dict(best_state)
+    return model
+
+def finetune_user(base_model, X, y, lr, pid):
+    """
+    Deep-copy the pre-trained model, add a new task head for this participant,
+    and fine-tune all parameters on the participant's training data.
+
+    Returns (fine-tuned model, local head index) or (None, None) on NaN.
+    """
+    model     = copy.deepcopy(base_model).to(device)
+    local_idx = model.add_task_head()   # appends head, returns its index
+
+    g = torch.Generator()
+    g.manual_seed(SEED + pid)
+    loader = DataLoader(
+        TensorDataset(torch.tensor(X, dtype=torch.float32),
+                      torch.tensor(y, dtype=torch.float32).unsqueeze(1)),
+        batch_size=PSTL_BATCH_SIZE, shuffle=True, generator=g, num_workers=0)
+
+    opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
-    best_loss = float('inf')
-    ckpt = os.path.join(output_dir, f'pretrain_{label_type}.pt')
 
-    for epoch in range(EPOCHS):
-        model.train(); running = 0.0
-        for batch in loader:
-            X_b, y_b, task_ids, _ = [b.to(device, non_blocking=True) for b in batch]
+    for ep in range(FT_EPOCHS):
+        model.train(); run = 0.0
+        for Xb, yb in loader:
+            Xb, yb = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
+            tids   = torch.full((Xb.size(0),), local_idx, dtype=torch.long, device=device)
             opt.zero_grad(set_to_none=True)
-            loss = loss_fn(model(X_b, task_ids), y_b)
-            total = loss + model.compute_l2(L2_SHARED, L2_TASK)
-            if torch.isnan(total): raise ValueError(f"NaN ep {epoch+1} [{label_type}]")
-            total.backward()
+            loss = loss_fn(model(Xb, tids), yb)
+            if torch.isnan(loss):
+                raise ValueError(f"NaN in finetune_user [pid {pid}, ep {ep+1}]")
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
-            opt.step(); running += total.item()
-        avg = running / len(loader)
-        sched.step(avg)
-        if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"  [{label_type.upper()}] Epoch {epoch+1}/{EPOCHS}  loss={avg:.4f}")
-        if avg < best_loss:
-            best_loss = avg; torch.save(model.state_dict(), ckpt)
+            opt.step(); run += loss.item()
+        sched.step(run / max(1, len(loader)))
 
-    model.load_state_dict(torch.load(ckpt, weights_only=True))
+    return model, local_idx
 
-    base = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
-    base.conv1.load_state_dict(model.conv1.state_dict())
-    base.bn1.load_state_dict(model.bn1.state_dict())
-    base.conv2.load_state_dict(model.conv2.state_dict())
-    base.bn2.load_state_dict(model.bn2.state_dict())
-    base.lstm.load_state_dict(model.lstm.state_dict())
-    return base
+def eval_user(model, local_idx, X, y, label):
+    """Evaluate fine-tuned model; returns prefixed result dict matching MTML convention."""
+    model.eval()
+    loader = DataLoader(
+        TensorDataset(torch.tensor(X, dtype=torch.float32),
+                      torch.tensor(y, dtype=torch.float32).unsqueeze(1)),
+        batch_size=PSTL_BATCH_SIZE, shuffle=False, num_workers=0)
+    probs, labels = [], []
+    with torch.no_grad():
+        for Xb, yb in loader:
+            tids_b = torch.full((Xb.size(0),), local_idx, dtype=torch.long, device=device)
+            probs.extend(torch.sigmoid(model(Xb.to(device, non_blocking=True), tids_b))
+                         .cpu().numpy().flatten())
+            labels.extend(yb.numpy().flatten())
+    y_true = np.array(labels).astype(int)
+    y_prob = np.array(probs)
+    y_pred = (y_prob > 0.5).astype(int)
+    cm     = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    acc, prec, rec, f1 = compute_metrics_from_cm(cm)
+    p = label.lower()
+    return {
+        'cm':                   cm,
+        f'{p}_acc':             acc,
+        f'{p}_precision':       prec,
+        f'{p}_recall':          rec,
+        f'{p}_f1':              f1,
+        f'y_true_{p}':          y_true,
+        f'y_pred_{p}':          y_pred,
+        f'y_pred_probs_{p}':    y_prob,
+    }
 
+# =============================
+# HYPERPARAMETER TUNING
+# =============================
+def hyperparameter_tuning(label_type='ar'):
+    print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type.upper()}] Transfer-MTL\n{'='*60}")
+    results     = []
+    train_folds = make_kfolds(train_participants)
+    for lr_pt in learning_rates_pt:
+        for lr_ft in learning_rates_ft:
+            fold_f1s = []
+            for fold_i in range(N_FOLDS):
+                val_ps = train_folds[fold_i]
+                tr_ps  = [p for j, f in enumerate(train_folds) if j != fold_i for p in f]
+                tr_tasks = {
+                    uid: df[(df['ID'] == uid) &
+                            (df['Trial'].isin(hardcoded_splits[uid]['train']))].reset_index(drop=True)
+                    for uid in tr_ps}
+                loader, _, lmap = make_combined_loader(tr_tasks, tr_ps, label_type, 'train')
+                if not lmap:
+                    continue
+                try:
+                    base = pretrain_mtl(loader, lmap, lr_pt, label_type)
+                except Exception:
+                    continue
+                val_f1s = []
+                for uid in val_ps:
+                    u_df = df[df['ID'] == uid].reset_index(drop=True)
+                    Xft, y_ar, y_va, _, _ = create_sliding_windows(
+                        u_df[u_df['Trial'].isin(hardcoded_splits[uid]['train'])],
+                        WINDOW_SIZE, STRIDE)
+                    Xte, yar_te, yva_te, _, _ = create_sliding_windows(
+                        u_df[u_df['Trial'].isin(hardcoded_splits[uid]['test'])],
+                        WINDOW_SIZE, STRIDE)
+                    yft = y_ar if label_type == 'ar' else y_va
+                    yte = yar_te if label_type == 'ar' else yva_te
+                    if len(Xft) == 0 or len(Xte) == 0:
+                        continue
+                    ft_model, li = finetune_user(base, Xft, yft, lr_ft, uid)
+                    if ft_model is None:
+                        continue
+                    r = eval_user(ft_model, li, Xte, yte, label_type)
+                    val_f1s.append(r[f'{label_type}_f1'])
+                if val_f1s:
+                    fold_f1s.append(np.mean(val_f1s))
+                    print(f"  fold {fold_i+1}: f1={fold_f1s[-1]:.4f}")
+                del base; torch.cuda.empty_cache(); gc.collect()
+            if not fold_f1s:
+                continue
+            avg = np.mean(fold_f1s)
+            results.append({'lr_pt': lr_pt, 'lr_ft': lr_ft,
+                             'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
+            print(f"  avg f1={avg:.4f}")
+    if not results:
+        return 1e-4, 5e-5
+    best = max(results, key=lambda x: x['avg_f1'])
+    with open(os.path.join(output_dir, f'{label_type}_tuning_results_transfermtl.pkl'), 'wb') as f:
+        pickle.dump({'all': results, 'best': best}, f)
+    return best['lr_pt'], best['lr_ft']
 
+# =============================
+# MAIN
+# =============================
 if __name__ == '__main__':
-    args = parse_args()
     experiment_t0 = time.time()
 
-    df, cfg = load_dataset(args.dataset, mode='mtml')
-    splits   = cfg['splits']
-    prefix   = cfg['results_prefix']
-    train_ps = cfg['train_participants']
-    test_ps  = cfg['test_participants']
+    best_lr_pt_ar, best_lr_ft_ar = hyperparameter_tuning('ar')
+    best_lr_pt_va, best_lr_ft_va = hyperparameter_tuning('va')
 
-    output_dir = os.path.join(RESULTS_DIR, f'{prefix}_MTML', f'{prefix}_transfer_mtl')
-    os.makedirs(output_dir, exist_ok=True)
+    tr_tasks = {
+        uid: df[(df['ID'] == uid) &
+                (df['Trial'].isin(hardcoded_splits[uid]['train']))].reset_index(drop=True)
+        for uid in train_participants}
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print('\n' + '='*60 + '\nPRETRAINING FINAL AR MTL\n' + '='*60)
+    loader_ar, _, map_ar = make_combined_loader(tr_tasks, train_participants, 'ar', 'FINAL-ar')
     set_all_seeds(SEED)
-    if device.type == 'cuda': torch.backends.cudnn.benchmark = True
-    print(f"Device: {device}\nDataset: {args.dataset}\nOutput: {output_dir}")
-    print(f"Train: {train_ps}\nTest:  {test_ps}")
+    train_t0 = time.time()
+    base_ar = pretrain_mtl(loader_ar, map_ar, best_lr_pt_ar, 'ar')
+    print(f"  AR pretraining complete in {time.time() - train_t0:.1f}s")
+    torch.save(base_ar.state_dict(), os.path.join(model_dir, 'base_model_ar_final.pth'))
 
-    # Build train data dict
-    train_data = {}
-    for idx, pid in enumerate(sorted(train_ps)):
-        p_df = df[df['ID'] == pid].reset_index(drop=True)
-        train_data[idx] = p_df[p_df['Trial'].isin(splits[pid]['train'])].reset_index(drop=True)
+    print('\n' + '='*60 + '\nPRETRAINING FINAL VA MTL\n' + '='*60)
+    loader_va, _, map_va = make_combined_loader(tr_tasks, train_participants, 'va', 'FINAL-va')
+    set_all_seeds(SEED)
+    train_t0 = time.time()
+    base_va = pretrain_mtl(loader_va, map_va, best_lr_pt_va, 'va')
+    print(f"  VA pretraining complete in {time.time() - train_t0:.1f}s")
+    torch.save(base_va.state_dict(), os.path.join(model_dir, 'base_model_va_final.pth'))
 
-    for lt in ['ar', 'va']:
-        print(f"\n{'='*60}\nPRETRAINING {lt.upper()}\n{'='*60}")
-        set_all_seeds(SEED)
-        base = _pretrain_mtl(lt, train_data, cfg, device, output_dir)
-        torch.save(base.state_dict(), os.path.join(output_dir, f'base_{lt}.pth'))
+    results_ar, results_va = [], []
+    for pid in sorted(test_participants):
+        u_df = df[df['ID'] == pid].reset_index(drop=True)
+        Xft, y_ar_ft, y_va_ft, _, _ = create_sliding_windows(
+            u_df[u_df['Trial'].isin(hardcoded_splits[pid]['train'])], WINDOW_SIZE, STRIDE)
+        Xte, y_ar_te, y_va_te, _, _ = create_sliding_windows(
+            u_df[u_df['Trial'].isin(hardcoded_splits[pid]['test'])],  WINDOW_SIZE, STRIDE)
 
-        print(f"\n{'='*60}\nFINE-TUNING + EVAL {lt.upper()} — TEST PARTICIPANTS\n{'='*60}")
-        results = []
-        for uid in sorted(test_ps):
-            if uid not in splits: continue
-            t_df = df[df['ID'] == uid].reset_index(drop=True)
-            head = TaskHead().to(device)
-            r = evaluate_test_user(
-                base, head, t_df, splits, uid, lt, device,
-                inner_steps=FT_EPOCHS, inner_lr=TRANSFER_MTL_LR_FT,
-                l2_shared=L2_SHARED, l2_task=L2_TASK,
-                window_size=cfg['window_size'], stride=cfg['stride'],
-                feature_cols=cfg['feature_cols'])
-            if r is not None:
-                results.append(r)
-                print(f"  P{uid}: {lt.upper()} Acc={r[f'{lt}_acc']:.4f} F1={r[f'{lt}_f1']:.4f}")
-
-        if lt == 'ar':
-            results_ar = results
-        else:
-            results_va = results
+        print(f"\nParticipant {pid}: fine-tuning")
+        for base, lr_ft, y_ft, y_te, results, label in [
+            (base_ar, best_lr_ft_ar, y_ar_ft, y_ar_te, results_ar, 'ar'),
+            (base_va, best_lr_ft_va, y_va_ft, y_va_te, results_va, 'va'),
+        ]:
+            ft_model, li = finetune_user(base, Xft, y_ft, lr_ft, pid)
+            if ft_model is None:
+                continue
+            r = eval_user(ft_model, li, Xte, y_te, label)
+            r['participant_id'] = pid
+            results.append(r)
+            print(f"  {label.upper()}: Acc={r[f'{label}_acc']:.4f} F1={r[f'{label}_f1']:.4f}")
 
     agg = aggregate_mtml_results(results_ar, results_va)
-    roc_data = {'AR': {'true': agg['all_true_ar'], 'probs': agg['all_probs_ar']},
-                'VA': {'true': agg['all_true_va'], 'probs': agg['all_probs_va']}}
+
+    for cm, label, fname in [(agg['cm_ar'], 'AR', 'ar_cm_transfermtl.png'),
+                              (agg['cm_va'], 'VA', 'va_cm_transfermtl.png')]:
+        plt.figure(figsize=(6, 5))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                    xticklabels=[f'{label}=0', f'{label}=1'],
+                    yticklabels=[f'{label}=0', f'{label}=1'])
+        plt.title(f'CM {label} (Transfer-MTL)')
+        plt.xlabel('Predicted'); plt.ylabel('True')
+        plt.savefig(os.path.join(output_dir, fname)); plt.close()
+
+    roc_data = {
+        'AR': {'true': agg['all_true_ar'], 'probs': agg['all_probs_ar']},
+        'VA': {'true': agg['all_true_va'], 'probs': agg['all_probs_va']},
+    }
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
         pickle.dump(roc_data, f)
 
-    ar_stds = compute_per_participant_stds(results_ar, 'ar')
-    va_stds = compute_per_participant_stds(results_va, 'va')
-
-    final = {
-        'train_participants': train_ps, 'test_participants': test_ps,
-        **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
-        **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
-        **ar_stds, **va_stds,
+    final_results = {
+        'train_participants': train_participants,
+        'test_participants':  test_participants,
+        'best_hyperparameters': {
+            'AR': {'lr_pt': best_lr_pt_ar, 'lr_ft': best_lr_ft_ar},
+            'VA': {'lr_pt': best_lr_pt_va, 'lr_ft': best_lr_ft_va}},
+        'ar_acc': agg['ar_acc'], 'ar_precision': agg['ar_precision'],
+        'ar_recall': agg['ar_recall'], 'ar_f1': agg['ar_f1'], 'ar_auc': agg['ar_auc'],
+        'va_acc': agg['va_acc'], 'va_precision': agg['va_precision'],
+        'va_recall': agg['va_recall'], 'va_f1': agg['va_f1'], 'va_auc': agg['va_auc'],
         'test_results_per_participant_ar': results_ar,
         'test_results_per_participant_va': results_va,
         'cm_ar': agg['cm_ar'], 'cm_va': agg['cm_va'],
     }
-    with open(os.path.join(output_dir, 'transfer_mtl_results.pkl'), 'wb') as f:
-        pickle.dump(final, f)
+    with open(os.path.join(output_dir, 'transfermtl_results.pkl'), 'wb') as f:
+        pickle.dump(final_results, f)
 
+    ar_stds = compute_per_participant_stds(results_ar, 'ar')
+    va_stds = compute_per_participant_stds(results_va, 'va')
     print_determinism_summary(
-        {f'ar_{k}': final[f'ar_{k}'] for k in ['auc','acc','precision','recall','f1']},
-        {f'va_{k}': final[f'va_{k}'] for k in ['auc','acc','precision','recall','f1']},
+        {f'ar_{k}': final_results[f'ar_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
+        {f'va_{k}': final_results[f'va_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
         ar_stds, va_stds)
 
     print(f"\n✓ All results saved to: {output_dir}")
