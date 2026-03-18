@@ -19,7 +19,7 @@ import torch.optim as optim
 from data import create_sliding_windows, make_mtl_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import MTLModel
-from utils import set_all_seeds, compute_metrics_from_cm, create_kfold_splits, aggregate_results
+from utils import set_all_seeds, create_kfold_splits, aggregate_results
 from training import save_all_results, evaluate_mtl_all
 
 NUM_TASKS  = len(participant_ids)

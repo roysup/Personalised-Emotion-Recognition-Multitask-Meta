@@ -1,12 +1,10 @@
-import os
 import random
 import numpy as np
 import torch
 import pandas as pd
-import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import roc_auc_score, roc_curve, auc, confusion_matrix
+from sklearn.metrics import roc_curve, auc, confusion_matrix
 
 
 # =============================

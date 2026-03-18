@@ -22,7 +22,7 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import confusion_matrix, f1_score
 
-from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
+from utils import (set_all_seeds, compute_metrics_from_cm,
                    make_kfolds, aggregate_mtml_results,
                    compute_per_participant_stds, print_determinism_summary)
 from data import create_sliding_windows, BalancedSampler

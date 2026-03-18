@@ -2,35 +2,8 @@
 # ENVIRONMENT  (must come before any torch import)
 # =============================
 import os
-import sys
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 os.environ["PYTHONHASHSEED"] = str(42)
-
-# =============================
-# SHARED IMPORTS
-# =============================
-import gc
-import copy
-import pickle
-from collections import OrderedDict
-
-import numpy as np
-import pandas as pd
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import TensorDataset, DataLoader
-
-from sklearn.metrics import (
-    confusion_matrix,
-    roc_auc_score,
-    roc_curve,
-    auc,
-    f1_score,
-    mutual_info_score,
-)
 
 # =============================
 # PATHS

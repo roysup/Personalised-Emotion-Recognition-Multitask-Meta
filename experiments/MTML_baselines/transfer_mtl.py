@@ -23,10 +23,10 @@ import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, f1_score
+from sklearn.metrics import confusion_matrix
 from torch.utils.data import TensorDataset, DataLoader
 
-from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
+from utils import (set_all_seeds, compute_metrics_from_cm,
                    make_kfolds, aggregate_mtml_results,
                    compute_per_participant_stds, print_determinism_summary)
 from data import create_sliding_windows, BalancedSampler

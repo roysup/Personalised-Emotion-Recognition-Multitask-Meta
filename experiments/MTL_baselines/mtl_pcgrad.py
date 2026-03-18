@@ -12,15 +12,14 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 from config import (SEED, WINDOW_SIZE, STRIDE, EPOCHS, MAX_NORM,
                     MTL_BATCH_SIZE, MTL_SHARED_LR, MTL_TASK_LR,
                     L2_SHARED, L2_TASK, HARDCODED_SPLITS, RESULTS_DIR)
-import numpy as np
 import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from data import create_sliding_windows, make_mtl_loader
+from data import make_mtl_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import MTLModel
-from utils import set_all_seeds, compute_metrics_from_cm, create_kfold_splits, aggregate_results
+from utils import set_all_seeds, aggregate_results
 from training import (save_all_results,
                       evaluate_mtl_all, _pcgrad_project)
 

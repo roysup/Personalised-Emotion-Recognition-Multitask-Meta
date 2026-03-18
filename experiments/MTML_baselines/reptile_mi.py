@@ -7,16 +7,14 @@ import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-from config import (SEED, WINDOW_SIZE, STRIDE, EPOCHS, MAX_NORM,
+from config import (SEED,
                     META_STEPS, META_LR, INNER_STEPS, INNER_LR, EPISODE_SIZE,
                     L2_SHARED, L2_TASK, HARDCODED_SPLITS, TEST_PARTICIPANTS,
                     RESULTS_DIR)
 import numpy as np
 import pickle
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from sklearn.metrics import confusion_matrix, mutual_info_score
+from sklearn.metrics import mutual_info_score
 from utils import (set_all_seeds,
                    aggregate_mtml_results, compute_per_participant_stds,
                    print_determinism_summary)

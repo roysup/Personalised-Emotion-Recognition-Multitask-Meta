@@ -12,15 +12,14 @@ from config import (SEED, WINDOW_SIZE, STRIDE, EPOCHS, MAX_NORM,
                     MTL_BATCH_SIZE, MTL_SHARED_LR, MTL_TASK_LR,
                     L2_SHARED, L2_TASK, UW_LOG_VAR_LR_AR, UW_LOG_VAR_LR_VA,
                     HARDCODED_SPLITS, RESULTS_DIR)
-import numpy as np
 import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from data import create_sliding_windows, make_mtl_loader
+from data import make_mtl_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import MTLModelUW
-from utils import set_all_seeds, compute_metrics_from_cm, aggregate_results
+from utils import set_all_seeds, aggregate_results
 from training import save_all_results, evaluate_mtl_all
 
 NUM_TASKS   = len(participant_ids)

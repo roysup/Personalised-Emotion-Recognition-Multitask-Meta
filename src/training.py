@@ -1,11 +1,9 @@
-import os
 import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix
 
-from utils import (compute_metrics_from_cm, safe_roc_auc,
-                   aggregate_results, aggregate_mtml_results)
+from utils import compute_metrics_from_cm
 
 
 # =============================

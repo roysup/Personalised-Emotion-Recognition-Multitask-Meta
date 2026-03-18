@@ -5,7 +5,7 @@ import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-from config import (SEED, WINDOW_SIZE, STRIDE, EPOCHS, MAX_NORM, N_FOLDS,
+from config import (SEED, WINDOW_SIZE, STRIDE, MAX_NORM, N_FOLDS,
                     META_STEPS, META_LR, INNER_STEPS, INNER_LR, L2_TASK,
                     HARDCODED_SPLITS, TEST_PARTICIPANTS, RESULTS_DIR)
 import copy
