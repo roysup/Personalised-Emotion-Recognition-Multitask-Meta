@@ -74,10 +74,6 @@ def print_metrics_detailed(label, acc, precision, recall, f1, auc_score=None):
 
 
 # =============================
-# F1 METRIC (streaming, used during training)
-# =============================
-
-# =============================
 # CROSS-VALIDATION SPLITS
 # =============================
 
