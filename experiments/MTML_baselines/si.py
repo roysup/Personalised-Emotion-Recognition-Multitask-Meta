@@ -184,11 +184,11 @@ if __name__ == '__main__':
     torch.save(model_ar.state_dict(), os.path.join(output_dir, 'model_ar_si.pth'))
 
     print('\n' + '='*60 + '\nTRAINING VA\n' + '='*60)
-    _, _, ytr_va, _, _ = create_sliding_windows(
+    Xtr_va, _, ytr_va, _, _ = create_sliding_windows(
         train_data, cfg['window_size'], cfg['stride'],
         trial_col='trial_global', feature_cols=cfg['feature_cols'])
     set_all_seeds(SEED)
-    model_va = train_model(Xtr_ar, ytr_va, best_lr_va, best_l2_va, cfg, device)
+    model_va = train_model(Xtr_va, ytr_va, best_lr_va, best_l2_va, cfg, device)
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'model_va_si.pth'))
 
     print('\n' + '='*60 + '\nEVALUATION AR\n' + '='*60)

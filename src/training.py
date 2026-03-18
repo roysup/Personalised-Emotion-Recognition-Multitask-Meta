@@ -331,8 +331,14 @@ def save_all_results(results, agg, output_dir, method_name, misclassification_cs
                        print_metrics_detailed, save_confusion_matrix_plot,
                        save_roc_plot)
 
+    participant_ids_map = {
+        r['task_idx']: r['participant_id']
+        for r in results
+        if 'task_idx' in r and 'participant_id' in r
+    }
+
     save_misclassification_rates(
-        results, [r['participant_id'] for r in results],
+        results, participant_ids_map,
         os.path.join(output_dir, misclassification_csv))
 
     results_df = build_results_table(results)
