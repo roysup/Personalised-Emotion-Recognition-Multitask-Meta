@@ -6,7 +6,15 @@ import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-from config import *
+from config import (SEED, WINDOW_SIZE, STRIDE, EPOCHS, MAX_NORM, N_FOLDS,
+                    PSTL_BATCH_SIZE, MTL_SHARED_LR, L2_TASK,
+                    HARDCODED_SPLITS, RESULTS_DIR)
+import numpy as np
+import pickle
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
 from data import create_sliding_windows, arrays_to_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import SingleTaskModel
@@ -18,11 +26,10 @@ OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_pstl_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+set_all_seeds(SEED)
 if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
-
-set_all_seeds(SEED)
 
 # =============================
 # DATA
@@ -170,8 +177,8 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas):
 if __name__ == '__main__':
     exp_t0 = time.time()
 
-    best_lr_ar, best_l2_ar = hyperparameter_tuning('ar', [MTL_SHARED_LR], [L2_LAMBDA])
-    best_lr_va, best_l2_va = hyperparameter_tuning('va', [MTL_SHARED_LR], [L2_LAMBDA])
+    best_lr_ar, best_l2_ar = hyperparameter_tuning('ar', [MTL_SHARED_LR], [L2_TASK])
+    best_lr_va, best_l2_va = hyperparameter_tuning('va', [MTL_SHARED_LR], [L2_TASK])
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)

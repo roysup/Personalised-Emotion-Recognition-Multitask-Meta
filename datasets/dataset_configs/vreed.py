@@ -52,8 +52,6 @@ def load_vreed_df(preserve_trial_order: bool = False,
                             'Num_Code': 'Trial'})
 
     if mode == 'mtml':
-        df = df.rename(columns={'Trial': 'video'})
-        df['Trial'] = df['video']
         df = df.sort_values(['ID', 'Trial']).reset_index(drop=True)
         return df
 

@@ -7,8 +7,16 @@ import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-from config import *
-
+from config import (SEED, WINDOW_SIZE, STRIDE, EPOCHS, MAX_NORM,
+                    META_STEPS, META_LR, INNER_STEPS, INNER_LR, EPISODE_SIZE,
+                    L2_SHARED, L2_TASK, HARDCODED_SPLITS, TEST_PARTICIPANTS,
+                    RESULTS_DIR)
+import numpy as np
+import pickle
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.metrics import confusion_matrix, mutual_info_score
 from utils import (set_all_seeds,
                    aggregate_mtml_results, compute_per_participant_stds,
                    print_determinism_summary)
@@ -23,10 +31,10 @@ output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_ReptileMeta_MI_episode')
 os.makedirs(output_dir, exist_ok=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+set_all_seeds(SEED)
 if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
-set_all_seeds(SEED)
 
 # =============================
 # DATA

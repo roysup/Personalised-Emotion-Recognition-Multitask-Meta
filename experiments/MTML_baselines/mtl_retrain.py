@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
 # config MUST be imported first — it sets CUBLAS/PYTHONHASHSEED before torch loads
-from config import (HARDCODED_SPLITS, SEED, MAX_NORM, RETRAIN_LR,
+from config import (HARDCODED_SPLITS, SEED, MAX_NORM, MTL_TASK_LR,
                     EPOCHS, WINDOW_SIZE, STRIDE, N_FOLDS, RESULTS_DIR,
                     L2_SHARED, L2_TASK, TEST_PARTICIPANTS)
 
@@ -36,13 +36,13 @@ model_dir        = os.path.join(output_dir, 'models')
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(model_dir,  exist_ok=True)
 
-learning_rates = [RETRAIN_LR]
+learning_rates = [MTL_TASK_LR]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+set_all_seeds(SEED)
 if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
-set_all_seeds(SEED)
 
 # =============================
 # DATA
@@ -103,7 +103,7 @@ def _train_fold(model, loader, lr, epochs):
             loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean()
                     + model.compute_l2(L2_SHARED, L2_TASK))
             if torch.isnan(loss):
-                return None
+                raise ValueError(f"NaN in _train_fold [ep {ep+1}]")
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += loss.item()

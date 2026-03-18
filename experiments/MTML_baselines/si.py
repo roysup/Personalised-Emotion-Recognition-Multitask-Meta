@@ -6,7 +6,15 @@ import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-from config import *
+from config import (SEED, WINDOW_SIZE, STRIDE, EPOCHS, MAX_NORM, N_FOLDS,
+                    PSTL_BATCH_SIZE, MTL_SHARED_LR, L2_TASK,
+                    HARDCODED_SPLITS, TEST_PARTICIPANTS, RESULTS_DIR)
+import numpy as np
+import pickle
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
 from utils import (set_all_seeds, compute_metrics_from_cm,
@@ -20,16 +28,15 @@ BASE_OUTPUT_DIR  = os.path.join(RESULTS_DIR, 'VREED_MTML')
 output_dir       = os.path.join(BASE_OUTPUT_DIR, 'VREED_SI')
 os.makedirs(output_dir, exist_ok=True)
 
-BATCH_SIZE     = SI_BATCH_SIZE
+BATCH_SIZE     = PSTL_BATCH_SIZE
 learning_rates = [MTL_SHARED_LR]
 l2_lambdas     = [L2_TASK]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+set_all_seeds(SEED)
 if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
-
-set_all_seeds(SEED)
 
 # =============================
 # DATA
@@ -59,7 +66,7 @@ def train_model(frames, labels, lr, l2_lambda, epochs=EPOCHS):
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b), y_b)
             if torch.isnan(loss):
-                return None
+                raise ValueError(f"NaN at epoch {epoch+1} [SI train_model]")
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += loss.item()

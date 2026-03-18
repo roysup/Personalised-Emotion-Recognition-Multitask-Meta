@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 # config MUST be imported first — it sets CUBLAS/PYTHONHASHSEED before torch loads
 from config import (HARDCODED_SPLITS, SEED, MAX_NORM,
                     TRANSFER_MTL_LR_PT, TRANSFER_MTL_LR_FT,
-                    MTL_L2_SHARED, MTL_L2_TASK, EPOCHS, FT_EPOCHS, PSTL_BATCH_SIZE,
+                    L2_SHARED, L2_TASK, EPOCHS, FT_EPOCHS, PSTL_BATCH_SIZE,
                     WINDOW_SIZE, STRIDE, N_FOLDS, TEST_PARTICIPANTS, RESULTS_DIR)
 
 import gc
@@ -44,10 +44,10 @@ learning_rates_pt = [TRANSFER_MTL_LR_PT]
 learning_rates_ft = [TRANSFER_MTL_LR_FT]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+set_all_seeds(SEED)
 if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
-set_all_seeds(SEED)
 
 # =============================
 # DATA
@@ -108,7 +108,7 @@ def pretrain_mtl(loader, local_map, lr, label_type):
             Xb, yb, tids = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True), tids.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean()
-                    + model.compute_l2(MTL_L2_SHARED, MTL_L2_TASK))
+                    + model.compute_l2(L2_SHARED, L2_TASK))
             if torch.isnan(loss):
                 raise ValueError(f"NaN epoch {ep}")
             loss.backward()
@@ -154,7 +154,7 @@ def finetune_user(base_model, X, y, lr, pid):
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(Xb, tids), yb)
             if torch.isnan(loss):
-                return None, None
+                raise ValueError(f"NaN in finetune_user [pid {pid}, ep {ep+1}]")
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += loss.item()

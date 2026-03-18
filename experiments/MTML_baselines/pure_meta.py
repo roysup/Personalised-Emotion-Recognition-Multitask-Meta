@@ -5,7 +5,18 @@ import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-from config import *
+from config import (SEED, WINDOW_SIZE, STRIDE, EPOCHS, MAX_NORM, N_FOLDS,
+                    META_STEPS, META_LR, INNER_STEPS, INNER_LR, L2_TASK,
+                    HARDCODED_SPLITS, TEST_PARTICIPANTS, RESULTS_DIR)
+import copy
+import gc
+import numpy as np
+import pickle
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from sklearn.metrics import confusion_matrix, f1_score
 from utils import (set_all_seeds, compute_metrics_from_cm,
                    aggregate_mtml_results, make_kfolds, compute_per_participant_stds,
                    print_determinism_summary)
@@ -25,10 +36,10 @@ inner_steps_grid = [INNER_STEPS]
 inner_lr_grid    = [INNER_LR]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+set_all_seeds(SEED)
 if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
-set_all_seeds(SEED)
 
 # =============================
 # DATA
@@ -54,10 +65,11 @@ def adapt(model, sup_loader, ar_or_va, inner_steps, inner_lr, l2_lambda):
             Xb, yb = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(adapted(Xb), yb)
-            if not torch.isnan(loss):
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(adapted.parameters(), MAX_NORM)
-                opt.step()
+            if torch.isnan(loss):
+                raise ValueError(f"NaN in adapt [step {step+1}]")
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(adapted.parameters(), MAX_NORM)
+            opt.step()
             ep_loss += loss.item(); nb += 1
         if nb > 0: sched.step(ep_loss / nb)
     return adapted
@@ -99,13 +111,13 @@ def hyperparameter_tuning(label_type='ar'):
                         val_users= {uid: df[df['ID']==uid].reset_index(drop=True) for uid in val_ps}
                         try:
                             model = SingleTaskModel().to(device)
-                            model = reptile_train(model, tr_users, ms, mlr, isp, ilr, L2_LAMBDA, label_type, SEED)
+                            model = reptile_train(model, tr_users, ms, mlr, isp, ilr, L2_TASK, label_type, SEED)
                         except Exception: continue
                         val_f1s = []
                         for uid in val_ps:
                             sup_loader, q_loader = make_sup_q_loader(val_users[uid], hardcoded_splits, uid, label_type)
                             if len(q_loader.dataset) == 0: continue
-                            adapted = adapt(model, sup_loader, label_type, isp, ilr, L2_LAMBDA)
+                            adapted = adapt(model, sup_loader, label_type, isp, ilr, L2_TASK)
                             adapted.eval(); probs, labels = [], []
                             with torch.no_grad():
                                 for Xb, yb in q_loader:
@@ -146,7 +158,7 @@ if __name__ == '__main__':
     set_all_seeds(SEED)
     model_ar = SingleTaskModel().to(device)
     train_t0 = time.time()
-    model_ar = reptile_train(model_ar, train_users_ar, bms_ar, bmlr_ar, bisp_ar, bilr_ar, L2_LAMBDA, 'ar', SEED)
+    model_ar = reptile_train(model_ar, train_users_ar, bms_ar, bmlr_ar, bisp_ar, bilr_ar, L2_TASK, 'ar', SEED)
     print(f"  AR training complete in {time.time() - train_t0:.1f}s")
     torch.save(model_ar.state_dict(), os.path.join(output_dir, 'meta_model_ar_final.pth'))
 
@@ -155,7 +167,7 @@ if __name__ == '__main__':
     train_users_va = {uid: df[df['ID']==uid].reset_index(drop=True) for uid in train_participants}
     model_va = SingleTaskModel().to(device)
     train_t0 = time.time()
-    model_va = reptile_train(model_va, train_users_va, bms_va, bmlr_va, bisp_va, bilr_va, L2_LAMBDA, 'va', SEED)
+    model_va = reptile_train(model_va, train_users_va, bms_va, bmlr_va, bisp_va, bilr_va, L2_TASK, 'va', SEED)
     print(f"  VA training complete in {time.time() - train_t0:.1f}s")
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'meta_model_va_final.pth'))
 
@@ -168,7 +180,7 @@ if __name__ == '__main__':
             sup_loader, q_loader = make_sup_q_loader(test_users[uid], hardcoded_splits, uid, label)
             if len(q_loader.dataset) == 0: continue
             print(f"  Participant {uid}: adapting")
-            adapted = adapt(model, sup_loader, label, bisp, bilr, L2_LAMBDA)
+            adapted = adapt(model, sup_loader, label, bisp, bilr, L2_TASK)
             adapted.eval(); probs, labels_list = [], []
             with torch.no_grad():
                 for Xb, yb in q_loader:
@@ -211,9 +223,9 @@ if __name__ == '__main__':
         'train_participants': train_participants, 'test_participants': test_participants,
         'best_hyperparameters': {
             'AR': {'meta_steps': bms_ar, 'meta_lr': bmlr_ar, 'inner_steps': bisp_ar,
-                   'inner_lr': bilr_ar, 'l2_lambda': L2_LAMBDA},
+                   'inner_lr': bilr_ar, 'l2_lambda': L2_TASK},
             'VA': {'meta_steps': bms_va, 'meta_lr': bmlr_va, 'inner_steps': bisp_va,
-                   'inner_lr': bilr_va, 'l2_lambda': L2_LAMBDA}},
+                   'inner_lr': bilr_va, 'l2_lambda': L2_TASK}},
         **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
         **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
         'test_results_per_participant_ar': results_ar,

@@ -55,24 +55,23 @@ FT_EPOCHS   = 10   # fine-tuning epochs (transfer_mtl.py, tlft.py)
 # =============================
 # BATCH SIZES
 # =============================
-PSTL_BATCH_SIZE = 32          # canonical 32-sample batch size
-FT_BATCH_SIZE   = PSTL_BATCH_SIZE   # transfer_mtl, tlft  (was duplicate 32)
-SI_BATCH_SIZE   = PSTL_BATCH_SIZE   # si.py               (was duplicate 32)
+PSTL_BATCH_SIZE = 32
 STL_BATCH_SIZE  = 8
 MTL_BATCH_SIZE  = 26
 
 # =============================
-# MTL LEARNING RATES / L2
+# LEARNING RATES / L2
 # =============================
 MTL_SHARED_LR = 3e-4
 MTL_TASK_LR   = 1e-4
-MTL_L2_TASK   = 1e-5
-MTL_L2_SHARED = 0.0
+L2_TASK       = 1e-5
+L2_SHARED     = 0.0
 
-# Canonical aliases — use these throughout MTML / Reptile scripts
-L2_SHARED = MTL_L2_SHARED   # 0.0
-L2_TASK   = MTL_L2_TASK     # 1e-5
-L2_LAMBDA = L2_TASK         # alias used by pure_meta, pstl (was duplicate 1e-5)
+# =============================
+# UW LOG-VARIANCE LEARNING RATES
+# =============================
+UW_LOG_VAR_LR_AR = 4e-3
+UW_LOG_VAR_LR_VA = 1e-3
 
 # =============================
 # META-LEARNING DEFAULTS
@@ -86,18 +85,13 @@ EPISODE_SIZE = 5
 # =============================
 # SCRIPT-SPECIFIC LR DEFAULTS
 # =============================
-# mtl_retrain  — same value as MTL_TASK_LR, kept as alias for clarity in that script
-RETRAIN_LR         = MTL_TASK_LR    # 1e-4
-
 # tlft.py
 TF_LR_PRE          = 1e-3
 TF_LR_FT           = 1e-3
-# TF_L2 removed — tlft.py now uses L2_TASK directly
 
 # transfer_mtl.py
 TRANSFER_MTL_LR_PT = 1e-4
 TRANSFER_MTL_LR_FT = 5e-5
-# SI_LR / SI_L2 removed — si.py now uses MTL_SHARED_LR / L2_TASK directly
 
 # =============================
 # MTML TEST/TRAIN SPLIT

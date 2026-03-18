@@ -8,7 +8,15 @@ import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-from config import *
+from config import (SEED, WINDOW_SIZE, STRIDE, EPOCHS, MAX_NORM,
+                    MTL_BATCH_SIZE, MTL_SHARED_LR, MTL_TASK_LR,
+                    L2_SHARED, L2_TASK, UW_LOG_VAR_LR_AR, UW_LOG_VAR_LR_VA,
+                    HARDCODED_SPLITS, RESULTS_DIR)
+import numpy as np
+import pickle
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from data import create_sliding_windows, make_mtl_loader
 from dataset_configs.vreed import load_vreed_df, participant_ids
 from models import MTLModelUW
@@ -16,17 +24,15 @@ from utils import set_all_seeds, compute_metrics_from_cm, aggregate_results
 from training import save_all_results, evaluate_mtl_all
 
 NUM_TASKS   = len(participant_ids)
-LOG_VAR_LR  = {'ar': 4e-3, 'va': 1e-3}
 
 OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_uw_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+set_all_seeds(SEED)
 if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {OUTPUT_DIR}")
-
-set_all_seeds(SEED)
 
 # =============================
 # DATA
@@ -104,13 +110,13 @@ if __name__ == '__main__':
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
     train_t0 = time.time()
-    model_ar = _train_uw('ar', MTL_SHARED_LR, MTL_TASK_LR, LOG_VAR_LR['ar'], train_data)
+    model_ar = _train_uw('ar', MTL_SHARED_LR, MTL_TASK_LR, UW_LOG_VAR_LR_AR, train_data)
     print(f"  AR training complete in {time.time() - train_t0:.1f}s")
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
     train_t0 = time.time()
-    model_va = _train_uw('va', MTL_SHARED_LR, MTL_TASK_LR, LOG_VAR_LR['va'], train_data)
+    model_va = _train_uw('va', MTL_SHARED_LR, MTL_TASK_LR, UW_LOG_VAR_LR_VA, train_data)
     print(f"  VA training complete in {time.time() - train_t0:.1f}s")
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)

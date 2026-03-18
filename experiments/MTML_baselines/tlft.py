@@ -6,7 +6,16 @@ import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
-from config import *
+from config import (SEED, WINDOW_SIZE, STRIDE, EPOCHS, MAX_NORM, N_FOLDS,
+                    PSTL_BATCH_SIZE, TF_LR_PRE, TF_LR_FT, FT_EPOCHS,
+                    L2_TASK, HARDCODED_SPLITS, TEST_PARTICIPANTS, RESULTS_DIR)
+import copy
+import numpy as np
+import pickle
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.metrics import confusion_matrix, f1_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 from utils import (set_all_seeds, compute_metrics_from_cm,
@@ -25,11 +34,10 @@ learning_rates_ft  = [TF_LR_FT]
 l2_lambdas         = [L2_TASK]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+set_all_seeds(SEED)
 if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True
 print(f"Device: {device}\nOutput: {output_dir}")
-
-set_all_seeds(SEED)
 
 # =============================
 # DATA
@@ -57,7 +65,7 @@ def pretrain(X, y, lr, l2_lambda, epochs):
     opt     = optim.Adam(model.parameters(), lr=lr, weight_decay=l2_lambda)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
-    loader  = arrays_to_loader(X, y, FT_BATCH_SIZE, shuffle=True, seed=SEED)
+    loader  = arrays_to_loader(X, y, PSTL_BATCH_SIZE, shuffle=True, seed=SEED)
     for ep in range(epochs):
         model.train(); run = 0.0
         for X_b, y_b in loader:
@@ -65,7 +73,7 @@ def pretrain(X, y, lr, l2_lambda, epochs):
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b), y_b)
             if torch.isnan(loss):
-                return None
+                raise ValueError(f"NaN in pretrain [ep {ep+1}]")
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += loss.item()
@@ -78,7 +86,7 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
     opt     = optim.Adam(model.parameters(), lr=lr, weight_decay=l2_lambda)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
-    loader  = arrays_to_loader(X, y, FT_BATCH_SIZE, shuffle=True, seed=SEED + pid)
+    loader  = arrays_to_loader(X, y, PSTL_BATCH_SIZE, shuffle=True, seed=SEED + pid)
     for ep in range(epochs):
         model.train(); run = 0.0
         for X_b, y_b in loader:
@@ -86,7 +94,7 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b), y_b)
             if torch.isnan(loss):
-                return None
+                raise ValueError(f"NaN in finetune [pid {pid}, ep {ep+1}]")
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step(); run += loss.item()
@@ -96,7 +104,7 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid):
 def eval_model(model, X, y):
     """Generic per-participant evaluation — returns unprefixed keys."""
     model.eval()
-    loader = arrays_to_loader(X, y, FT_BATCH_SIZE, shuffle=False)
+    loader = arrays_to_loader(X, y, PSTL_BATCH_SIZE, shuffle=False)
     probs, trues = [], []
     with torch.no_grad():
         for X_b, y_b in loader:
