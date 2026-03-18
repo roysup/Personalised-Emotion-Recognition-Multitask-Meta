@@ -22,7 +22,7 @@ from utils import set_all_seeds, create_kfold_splits, aggregate_results
 from training import save_all_results, evaluate_stl_all
 
 BATCH_SIZE = STL_BATCH_SIZE
-OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_stl_results')
+OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTL', 'VREED_stl_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

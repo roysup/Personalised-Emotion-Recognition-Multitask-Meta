@@ -24,7 +24,7 @@ from training import save_all_results, evaluate_mtl_all
 
 NUM_TASKS  = len(participant_ids)
 
-OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_hps_results')
+OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTL', 'VREED_hps_results')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
