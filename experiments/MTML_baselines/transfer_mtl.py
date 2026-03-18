@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 # config MUST be imported first — it sets CUBLAS/PYTHONHASHSEED before torch loads
 from config import (HARDCODED_SPLITS, SEED, MAX_NORM,
                     TRANSFER_MTL_LR_PT, TRANSFER_MTL_LR_FT,
-                    L2_SHARED, L2_TASK, EPOCHS, FT_EPOCHS, FT_BATCH_SIZE,
+                    MTL_L2_SHARED, MTL_L2_TASK, EPOCHS, FT_EPOCHS, PSTL_BATCH_SIZE,
                     WINDOW_SIZE, STRIDE, N_FOLDS, TEST_PARTICIPANTS, RESULTS_DIR)
 
 import gc
@@ -28,8 +28,7 @@ from torch.utils.data import TensorDataset, DataLoader
 
 from utils import (set_all_seeds, compute_metrics_from_cm, safe_roc_auc,
                    make_kfolds, aggregate_mtml_results,
-                   compute_per_participant_stds, print_determinism_summary,
-                   prefix_results)
+                   compute_per_participant_stds, print_determinism_summary)
 from data import create_sliding_windows, BalancedSampler
 from models import MTLTransferModel
 from dataset_configs.vreed import load_vreed_df
@@ -111,7 +110,7 @@ def pretrain_mtl(loader, local_map, lr, label_type):
             Xb, yb, tids = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True), tids.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = (loss_fn(model(Xb, tids), yb).squeeze(-1).mean()
-                    + model.compute_l2(L2_SHARED, L2_TASK))
+                    + model.compute_l2(MTL_L2_SHARED, MTL_L2_TASK))
             if torch.isnan(loss):
                 raise ValueError(f"NaN epoch {ep}")
             loss.backward()
@@ -144,7 +143,7 @@ def finetune_user(base_model, X, y, lr, pid):
     loader = DataLoader(
         TensorDataset(torch.tensor(X, dtype=torch.float32),
                       torch.tensor(y, dtype=torch.float32).unsqueeze(1)),
-        batch_size=FT_BATCH_SIZE, shuffle=True, generator=g, num_workers=0)
+        batch_size=PSTL_BATCH_SIZE, shuffle=True, generator=g, num_workers=0)
 
     opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
@@ -167,12 +166,13 @@ def finetune_user(base_model, X, y, lr, pid):
     return model, local_idx
 
 
-def eval_user(model, local_idx, X, y):
+def eval_user(model, local_idx, X, y, label):
+    """Evaluate fine-tuned model; returns prefixed result dict matching MTML convention."""
     model.eval()
     loader = DataLoader(
         TensorDataset(torch.tensor(X, dtype=torch.float32),
                       torch.tensor(y, dtype=torch.float32).unsqueeze(1)),
-        batch_size=FT_BATCH_SIZE, shuffle=False, num_workers=0)
+        batch_size=PSTL_BATCH_SIZE, shuffle=False, num_workers=0)
     probs, labels = [], []
     with torch.no_grad():
         for Xb, yb in loader:
@@ -185,8 +185,17 @@ def eval_user(model, local_idx, X, y):
     y_pred = (y_prob > 0.5).astype(int)
     cm     = confusion_matrix(y_true, y_pred, labels=[0, 1])
     acc, prec, rec, f1 = compute_metrics_from_cm(cm)
-    return {'y_true': y_true, 'y_pred': y_pred, 'y_pred_probs': y_prob, 'cm': cm,
-            'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1}
+    p = label.lower()
+    return {
+        'cm':                   cm,
+        f'{p}_acc':             acc,
+        f'{p}_precision':       prec,
+        f'{p}_recall':          rec,
+        f'{p}_f1':              f1,
+        f'y_true_{p}':          y_true,
+        f'y_pred_{p}':          y_pred,
+        f'y_pred_probs_{p}':    y_prob,
+    }
 
 
 # =============================
@@ -229,8 +238,8 @@ def hyperparameter_tuning(label_type='ar'):
                     ft_model, li = finetune_user(base, Xft, yft, lr_ft, uid)
                     if ft_model is None:
                         continue
-                    r = eval_user(ft_model, li, Xte, yte)
-                    val_f1s.append(r['f1'])
+                    r = eval_user(ft_model, li, Xte, yte, label_type)
+                    val_f1s.append(r[f'{label_type}_f1'])
                 if val_f1s:
                     fold_f1s.append(np.mean(val_f1s))
                     print(f"  fold {fold_i+1}: f1={fold_f1s[-1]:.4f}")
@@ -295,10 +304,10 @@ if __name__ == '__main__':
             ft_model, li = finetune_user(base, Xft, y_ft, lr_ft, pid)
             if ft_model is None:
                 continue
-            r = eval_user(ft_model, li, Xte, y_te)
+            r = eval_user(ft_model, li, Xte, y_te, label)
             r['participant_id'] = pid
             results.append(r)
-            print(f"  {label.upper()}: Acc={r['accuracy']:.4f} F1={r['f1']:.4f}")
+            print(f"  {label.upper()}: Acc={r[f'{label}_acc']:.4f} F1={r[f'{label}_f1']:.4f}")
 
     agg = aggregate_mtml_results(results_ar, results_va)
 
@@ -336,8 +345,8 @@ if __name__ == '__main__':
     with open(os.path.join(output_dir, 'transfermtl_results.pkl'), 'wb') as f:
         pickle.dump(final_results, f)
 
-    ar_stds = compute_per_participant_stds(prefix_results(results_ar, 'ar'), 'ar')
-    va_stds = compute_per_participant_stds(prefix_results(results_va, 'va'), 'va')
+    ar_stds = compute_per_participant_stds(results_ar, 'ar')
+    va_stds = compute_per_participant_stds(results_va, 'va')
     print_determinism_summary(
         {f'ar_{k}': final_results[f'ar_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
         {f'va_{k}': final_results[f'va_{k}'] for k in ['auc', 'acc', 'precision', 'recall', 'f1']},
