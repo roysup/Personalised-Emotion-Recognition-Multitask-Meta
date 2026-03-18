@@ -127,7 +127,7 @@ def hyperparameter_tuning(label_type='AR'):
 # =============================
 # EVALUATION HELPER
 # =============================
-def evaluate_per_participant(model, test_participants, test_data, label_type):
+def evaluate_si_participants(model, test_participants, test_data, label_type):
     """
     Evaluate a single pooled model per-participant on test data.
     Returns result dicts using the prefixed key convention:
@@ -206,9 +206,9 @@ if __name__ == '__main__':
     torch.save(model_va.state_dict(), os.path.join(output_dir, 'model_va_si.pth'))
 
     print('\n' + '='*60 + '\nEVALUATION AR\n' + '='*60)
-    results_ar = evaluate_per_participant(model_ar, test_participants, test_data, 'AR')
+    results_ar = evaluate_si_participants(model_ar, test_participants, test_data, 'AR')
     print('\n' + '='*60 + '\nEVALUATION VA\n' + '='*60)
-    results_va = evaluate_per_participant(model_va, test_participants, test_data, 'VA')
+    results_va = evaluate_si_participants(model_va, test_participants, test_data, 'VA')
 
     agg = aggregate_mtml_results(results_ar, results_va)
 
