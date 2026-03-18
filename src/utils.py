@@ -79,27 +79,6 @@ def print_metrics_detailed(label, acc, precision, recall, f1, auc_score=None):
 # F1 METRIC (streaming, used during training)
 # =============================
 
-class F1Score:
-    def __init__(self, threshold=0.5):
-        self.threshold = threshold
-        self.tp = self.fp = self.fn = 0
-
-    def update_state(self, y_true, y_pred_logits):
-        y_pred = (torch.sigmoid(y_pred_logits) > self.threshold).float()
-        y_true = y_true.float()
-        self.tp += torch.sum(y_true * y_pred).item()
-        self.fp += torch.sum((1 - y_true) * y_pred).item()
-        self.fn += torch.sum(y_true * (1 - y_pred)).item()
-
-    def result(self):
-        p = self.tp / (self.tp + self.fp + 1e-7)
-        r = self.tp / (self.tp + self.fn + 1e-7)
-        return 2 * p * r / (p + r + 1e-7)
-
-    def reset_state(self):
-        self.tp = self.fp = self.fn = 0
-
-
 # =============================
 # CROSS-VALIDATION SPLITS
 # =============================

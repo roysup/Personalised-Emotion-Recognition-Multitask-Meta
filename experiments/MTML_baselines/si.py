@@ -18,7 +18,7 @@ from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
 from utils import (set_all_seeds, compute_metrics_from_cm,
-                   aggregate_mtml_results, F1Score, make_kfolds,
+                   aggregate_mtml_results, make_kfolds,
                    compute_per_participant_stds, print_determinism_summary)
 from data import create_sliding_windows, arrays_to_loader
 from models import SingleTaskModel
@@ -104,12 +104,17 @@ def hyperparameter_tuning(label_type='AR'):
                 if model is None:
                     fold_f1s.append(0.0); continue
                 model.eval()
-                f1m    = F1Score()
+                tp = fp = fn = 0
                 loader = arrays_to_loader(Xva, yva, BATCH_SIZE, shuffle=False)
                 with torch.no_grad():
                     for X_v, y_v in loader:
-                        f1m.update_state(y_v.to(device, non_blocking=True), model(X_v.to(device, non_blocking=True)))
-                fold_f1s.append(f1m.result())
+                        pred = (torch.sigmoid(model(X_v.to(device, non_blocking=True))) > 0.5).float().cpu()
+                        tp += (y_v * pred).sum().item()
+                        fp += ((1 - y_v) * pred).sum().item()
+                        fn += (y_v * (1 - pred)).sum().item()
+                p = tp / (tp + fp + 1e-7)
+                r = tp / (tp + fn + 1e-7)
+                fold_f1s.append(2 * p * r / (p + r + 1e-7))
                 print(f"  fold {fold_i+1}: f1={fold_f1s[-1]:.4f}")
             avg = np.mean(fold_f1s)
             results.append({'lr': lr, 'l2': l2, 'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
