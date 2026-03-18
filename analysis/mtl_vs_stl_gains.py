@@ -16,6 +16,7 @@ import seaborn as sns
 from config import RESULTS_DIR
 
 BASE_OUTPUT_DIR = RESULTS_DIR
+MTL_OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_MTL')
 
 
 def aggregate_accuracy(df):
@@ -29,9 +30,9 @@ def aggregate_accuracy(df):
 
 
 if __name__ == '__main__':
-    mtl_file = os.path.join(BASE_OUTPUT_DIR, 'VREED_hps_results',
+    mtl_file = os.path.join(MTL_OUTPUT_DIR, 'VREED_hps_results',
                             'VREED_hps_misclassification_rates.csv')
-    stl_file = os.path.join(BASE_OUTPUT_DIR, 'VREED_stl_results',
+    stl_file = os.path.join(MTL_OUTPUT_DIR, 'VREED_stl_results',
                             'VREED_stl_misclassification_rates.csv')
 
     print('=' * 60)

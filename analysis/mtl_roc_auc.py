@@ -18,6 +18,7 @@ from sklearn.metrics import roc_curve, auc
 from config import RESULTS_DIR
 
 BASE_OUTPUT_DIR = RESULTS_DIR
+MTL_OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_MTL')
 
 COLORS = {
     'P-STL':       '#1f77b4',
@@ -117,11 +118,11 @@ def plot_roc(all_predictions, task, save_path):
 
 if __name__ == '__main__':
     MODEL_DIRS = {
-        'P-STL':      os.path.join(BASE_OUTPUT_DIR, 'VREED_pstl_results'),
-        'STL':        os.path.join(BASE_OUTPUT_DIR, 'VREED_stl_results'),
-        'MTL':        os.path.join(BASE_OUTPUT_DIR, 'VREED_hps_results'),
-        'MTL+UW':     os.path.join(BASE_OUTPUT_DIR, 'VREED_hps_uw_results'),
-        'MTL+PCGrad': os.path.join(BASE_OUTPUT_DIR, 'VREED_hps_pcgrad_results'),
+        'P-STL':      os.path.join(MTL_OUTPUT_DIR, 'VREED_pstl_results'),
+        'STL':        os.path.join(MTL_OUTPUT_DIR, 'VREED_stl_results'),
+        'MTL':        os.path.join(MTL_OUTPUT_DIR, 'VREED_hps_results'),
+        'MTL+UW':     os.path.join(MTL_OUTPUT_DIR, 'VREED_hps_uw_results'),
+        'MTL+PCGrad': os.path.join(MTL_OUTPUT_DIR, 'VREED_hps_pcgrad_results'),
     }
 
     output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_combined_roc_plots')
