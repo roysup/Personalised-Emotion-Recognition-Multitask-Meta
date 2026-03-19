@@ -2,7 +2,14 @@
 MTML All-Methods ROC-AUC Comparison
 Loads global_roc_data.pkl from each of the 7 meta/transfer methods and
 produces combined ROC curves, a grouped bar chart, and an AUC summary CSV.
+
+Usage
+-----
+    python mtml_roc_auc.py                  # runs on VREED (default)
+    python mtml_roc_auc.py --dataset dssn_eq
+    python mtml_roc_auc.py --dataset dssn_em
 """
+import argparse
 import os
 import sys
 
@@ -15,21 +22,32 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc
-from config import RESULTS_DIR
+from config import get_dataset_config, RESULTS_DIR
 
-BASE_OUTPUT_DIR = os.path.join(RESULTS_DIR, 'VREED_MTML')
 
-ROC_DATA_PATHS = {
-    'PSTL (SI)':                  os.path.join(BASE_OUTPUT_DIR, 'VREED_SI',                       'global_roc_data.pkl'),
-    'TL-FT':                      os.path.join(BASE_OUTPUT_DIR, 'VREED_TF',                       'global_roc_data.pkl'),
-    'MTL':                        os.path.join(BASE_OUTPUT_DIR, 'VREED_MTL_retrain',               'global_roc_data.pkl'),
-    'Transfer-MTL':               os.path.join(BASE_OUTPUT_DIR, 'VREED_TransferMTL',              'global_roc_data.pkl'),
-    'Pure Meta':                  os.path.join(BASE_OUTPUT_DIR, 'VREED_PureMeta',                 'global_roc_data.pkl'),
-    'Meta-MTL (single task eps)': os.path.join(BASE_OUTPUT_DIR, 'VREED_ReptileMeta_ST_episode',   'global_roc_data.pkl'),
-    'Meta-MTL (multi task eps)':  os.path.join(BASE_OUTPUT_DIR, 'VREED_ReptileMeta_MT_episode',   'global_roc_data.pkl'),
+def parse_args():
+    p = argparse.ArgumentParser(description='MTML all-methods ROC-AUC comparison')
+    p.add_argument('--dataset', type=str, default='vreed',
+                   choices=['vreed', 'dssn_eq', 'dssn_em'],
+                   help='Dataset to analyse (default: vreed)')
+    return p.parse_args()
+
+
+# Method display names → subdirectory suffixes (appended to {prefix}_MTML/{prefix}_)
+METHOD_SUBDIRS = {
+    'PSTL (SI)':                  'SI',
+    'TL-FT':                      'TF',
+    'MTL':                        'mtl_retrain',
+    'Transfer-MTL':               'transfer_mtl',
+    'Pure Meta':                  'pure_meta',
+    'Meta-MTL (single task eps)': 'reptile_st',
+    'Meta-MTL (multi task eps)':  'reptile_mt',
 }
 
-METHOD_ORDER = list(ROC_DATA_PATHS.keys())
+# Special case: Reptile MI uses a different naming pattern in some setups.
+# Add it here if you have that experiment.  For now the 7 above match your scripts.
+
+METHOD_ORDER = list(METHOD_SUBDIRS.keys())
 
 COLORS = {
     'PSTL (SI)':                  '#1f77b4',
@@ -60,6 +78,15 @@ MARKERS = {
     'Meta-MTL (single task eps)': 'p',
     'Meta-MTL (multi task eps)':  '*',
 }
+
+
+def build_roc_paths(prefix):
+    """Return {method_name: path_to_global_roc_data.pkl}."""
+    mtml_dir = os.path.join(RESULTS_DIR, f'{prefix}_MTML')
+    return {
+        name: os.path.join(mtml_dir, f'{prefix}_{subdir}', 'global_roc_data.pkl')
+        for name, subdir in METHOD_SUBDIRS.items()
+    }
 
 
 def load_roc_data(path, method_name):
@@ -95,7 +122,7 @@ def safe_roc_auc(y_true, y_probs, name=''):
     return fpr, tpr, auc(fpr, tpr)
 
 
-def plot_roc_comparison(all_data, task, save_path):
+def plot_roc_comparison(all_data, task, save_path, prefix):
     plt.figure(figsize=(12, 9))
     results = []
 
@@ -128,7 +155,7 @@ def plot_roc_comparison(all_data, task, save_path):
     task_full = 'Arousal' if task == 'AR' else 'Valence'
     plt.xlabel('False Positive Rate', fontsize=15, fontweight='bold')
     plt.ylabel('True Positive Rate', fontsize=15, fontweight='bold')
-    plt.title(f'ROC Curve Comparison — {task_full}',
+    plt.title(f'ROC Curve Comparison — {task_full} ({prefix})',
               fontsize=17, fontweight='bold', pad=20)
     plt.xlim([0.0, 1.0]); plt.ylim([0.0, 1.05])
     plt.legend(loc='lower right', fontsize=10, framealpha=0.95)
@@ -140,7 +167,7 @@ def plot_roc_comparison(all_data, task, save_path):
     return results
 
 
-def plot_auc_bar(ar_results, va_results, save_path):
+def plot_auc_bar(ar_results, va_results, save_path, prefix):
     ar_dict = {r['method']: r['auc'] for r in ar_results}
     va_dict = {r['method']: r['auc'] for r in va_results}
     methods = [m for m in METHOD_ORDER if m in ar_dict and m in va_dict]
@@ -164,7 +191,7 @@ def plot_auc_bar(ar_results, va_results, save_path):
 
     ax.set_xlabel('Method', fontsize=14, fontweight='bold')
     ax.set_ylabel('AUC Score', fontsize=14, fontweight='bold')
-    ax.set_title('AUC Comparison — All Methods', fontsize=16,
+    ax.set_title(f'AUC Comparison — All Methods ({prefix})', fontsize=16,
                  fontweight='bold', pad=20)
     ax.set_xticks(x)
     ax.set_xticklabels(methods, rotation=45, ha='right')
@@ -178,11 +205,17 @@ def plot_auc_bar(ar_results, va_results, save_path):
 
 
 if __name__ == '__main__':
-    output_dir = os.path.join(BASE_OUTPUT_DIR, 'ROC_Comparisons_All')
+    args = parse_args()
+    cfg = get_dataset_config(args.dataset)
+    prefix = cfg['results_prefix']
+
+    ROC_DATA_PATHS = build_roc_paths(prefix)
+
+    output_dir = os.path.join(RESULTS_DIR, f'{prefix}_MTML', 'ROC_Comparisons_All')
     os.makedirs(output_dir, exist_ok=True)
 
     print('=' * 70)
-    print('LOADING ROC DATA')
+    print(f'LOADING ROC DATA  ({prefix})')
     print('=' * 70)
     all_roc_data = {}
     for method_name, path in ROC_DATA_PATHS.items():
@@ -201,20 +234,23 @@ if __name__ == '__main__':
     print('=' * 70)
     ar_results = plot_roc_comparison(
         all_roc_data, 'AR',
-        os.path.join(output_dir, 'ROC_Comparison_AR_All.png'))
+        os.path.join(output_dir, 'ROC_Comparison_AR_All.png'),
+        prefix)
 
     print('\n' + '=' * 70)
     print('VALENCE ROC')
     print('=' * 70)
     va_results = plot_roc_comparison(
         all_roc_data, 'VA',
-        os.path.join(output_dir, 'ROC_Comparison_VA_All.png'))
+        os.path.join(output_dir, 'ROC_Comparison_VA_All.png'),
+        prefix)
 
     print('\n' + '=' * 70)
     print('AUC BAR CHART')
     print('=' * 70)
     plot_auc_bar(ar_results, va_results,
-                 os.path.join(output_dir, 'AUC_Bar_Comparison_All.png'))
+                 os.path.join(output_dir, 'AUC_Bar_Comparison_All.png'),
+                 prefix)
 
     # Summary CSV
     rows = ([{**r, 'Task': 'AR'} for r in ar_results] +

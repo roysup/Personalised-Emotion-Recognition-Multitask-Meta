@@ -2,7 +2,14 @@
 MTL vs STL Gains Analysis
 Computes per-participant accuracy gains of MTL over STL,
 saves a CSV summary and a bar chart.
+
+Usage
+-----
+    python mtl_vs_stl_gains.py                  # runs on VREED (default)
+    python mtl_vs_stl_gains.py --dataset dssn_eq
+    python mtl_vs_stl_gains.py --dataset dssn_em
 """
+import argparse
 import os
 import sys
 
@@ -13,10 +20,15 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from config import RESULTS_DIR
+from config import get_dataset_config, RESULTS_DIR
 
-BASE_OUTPUT_DIR = RESULTS_DIR
-MTL_OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_MTL')
+
+def parse_args():
+    p = argparse.ArgumentParser(description='MTL vs STL gains analysis')
+    p.add_argument('--dataset', type=str, default='vreed',
+                   choices=['vreed', 'dssn_eq', 'dssn_em'],
+                   help='Dataset to analyse (default: vreed)')
+    return p.parse_args()
 
 
 def aggregate_accuracy(df):
@@ -30,13 +42,19 @@ def aggregate_accuracy(df):
 
 
 if __name__ == '__main__':
-    mtl_file = os.path.join(MTL_OUTPUT_DIR, 'VREED_hps_results',
-                            'VREED_hps_misclassification_rates.csv')
-    stl_file = os.path.join(MTL_OUTPUT_DIR, 'VREED_stl_results',
-                            'VREED_stl_misclassification_rates.csv')
+    args = parse_args()
+    cfg = get_dataset_config(args.dataset)
+    prefix = cfg['results_prefix']
+
+    MTL_OUTPUT_DIR = os.path.join(RESULTS_DIR, f'{prefix}_MTL')
+
+    mtl_file = os.path.join(MTL_OUTPUT_DIR, f'{prefix}_hps_results',
+                            f'{prefix}_hps_misclassification_rates.csv')
+    stl_file = os.path.join(MTL_OUTPUT_DIR, f'{prefix}_stl_results',
+                            f'{prefix}_stl_misclassification_rates.csv')
 
     print('=' * 60)
-    print('MTL VS STL GAINS ANALYSIS')
+    print(f'MTL VS STL GAINS ANALYSIS  ({prefix})')
     print('=' * 60)
 
     for label, path in [('MTL', mtl_file), ('STL', stl_file)]:
@@ -63,7 +81,7 @@ if __name__ == '__main__':
     merged = merged.sort_values('participant_id').reset_index(drop=True)
 
     # Save CSV
-    output_csv = os.path.join(BASE_OUTPUT_DIR, 'VREED_MTL_vs_STL_Gains.csv')
+    output_csv = os.path.join(RESULTS_DIR, f'{prefix}_MTL_vs_STL_Gains.csv')
     merged.to_csv(output_csv, index=False)
     print(f'\n✓ Saved gains to: {output_csv}')
 
@@ -119,14 +137,14 @@ if __name__ == '__main__':
     plt.axhline(0, color='black', linewidth=1.2, linestyle='--', alpha=0.7)
     plt.xlabel('Participant ID', fontsize=13)
     plt.ylabel('Accuracy Gain (%)', fontsize=13)
-    plt.title('MTL vs STL Accuracy Gain per Participant',
+    plt.title(f'MTL vs STL Accuracy Gain per Participant ({prefix})',
               fontsize=15, fontweight='bold')
     plt.xticks(index, merged['participant_id'], rotation=45)
     plt.legend(frameon=True, fontsize=11, loc='upper left')
     plt.grid(axis='y', linestyle='--', alpha=0.4)
     plt.tight_layout()
 
-    plot_file = os.path.join(BASE_OUTPUT_DIR, 'VREED_mtl_vs_stl_gains.png')
+    plot_file = os.path.join(RESULTS_DIR, f'{prefix}_mtl_vs_stl_gains.png')
     plt.savefig(plot_file, dpi=300, bbox_inches='tight')
     plt.show()
     print(f'\n✓ Saved plot to: {plot_file}')

@@ -2,7 +2,14 @@
 MTL Baselines ROC-AUC
 Loads per-participant predictions from all 5 MTL baseline PKL files and
 plots combined ROC curves for arousal and valence.
+
+Usage
+-----
+    python mtl_roc_auc.py                  # runs on VREED (default)
+    python mtl_roc_auc.py --dataset dssn_eq
+    python mtl_roc_auc.py --dataset dssn_em
 """
+import argparse
 import os
 import sys
 
@@ -15,10 +22,16 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc
-from config import RESULTS_DIR
+from config import get_dataset_config, RESULTS_DIR
 
-BASE_OUTPUT_DIR = RESULTS_DIR
-MTL_OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, 'VREED_MTL')
+
+def parse_args():
+    p = argparse.ArgumentParser(description='MTL baselines ROC-AUC')
+    p.add_argument('--dataset', type=str, default='vreed',
+                   choices=['vreed', 'dssn_eq', 'dssn_em'],
+                   help='Dataset to analyse (default: vreed)')
+    return p.parse_args()
+
 
 COLORS = {
     'P-STL':       '#1f77b4',
@@ -37,19 +50,32 @@ LINE_STYLES = {
 }
 
 
+def get_model_dirs(prefix):
+    """Return dict of model name → result directory, parameterised by prefix."""
+    mtl_dir = os.path.join(RESULTS_DIR, f'{prefix}_MTL')
+    return {
+        'P-STL':      os.path.join(mtl_dir, f'{prefix}_pstl_results'),
+        'STL':        os.path.join(mtl_dir, f'{prefix}_stl_results'),
+        'MTL':        os.path.join(mtl_dir, f'{prefix}_hps_results'),
+        'MTL+UW':     os.path.join(mtl_dir, f'{prefix}_hps_uw_results'),
+        'MTL+PCGrad': os.path.join(mtl_dir, f'{prefix}_hps_pcgrad_results'),
+    }
+
+
+PKL_MAP = {
+    'P-STL':      'pstl_results.pkl',
+    'STL':        'stl_tuned_results.pkl',
+    'MTL':        'hps_tuned_results.pkl',
+    'MTL+UW':     'hps_uw_results.pkl',
+    'MTL+PCGrad': 'hps_pcgrad_results.pkl',
+}
+
+
 def load_predictions(model_name, model_dir):
     """Return {'ar': {'y_true': ..., 'y_probs': ...}, 'va': {...}} or None."""
     preds = {'ar': None, 'va': None}
 
-    pkl_map = {
-        'P-STL':      'pstl_results.pkl',
-        'STL':        'stl_tuned_results.pkl',
-        'MTL':        'hps_tuned_results.pkl',
-        'MTL+UW':     'hps_uw_results.pkl',
-        'MTL+PCGrad': 'hps_pcgrad_results.pkl',
-    }
-
-    pkl_path = os.path.join(model_dir, pkl_map[model_name])
+    pkl_path = os.path.join(model_dir, PKL_MAP[model_name])
     if not os.path.exists(pkl_path):
         print(f'  ✗ Not found: {pkl_path}')
         return preds
@@ -83,7 +109,7 @@ def compute_auc(data):
     return fpr, tpr, auc(fpr, tpr)
 
 
-def plot_roc(all_predictions, task, save_path):
+def plot_roc(all_predictions, task, save_path, prefix):
     plt.figure(figsize=(10, 8))
     summary = []
 
@@ -106,7 +132,7 @@ def plot_roc(all_predictions, task, save_path):
     task_full = 'Arousal' if task == 'AR' else 'Valence'
     plt.xlabel('False Positive Rate', fontsize=14)
     plt.ylabel('True Positive Rate', fontsize=14)
-    plt.title(f'ROC Curves — {task_full}', fontsize=16, fontweight='bold')
+    plt.title(f'ROC Curves — {task_full} ({prefix})', fontsize=16, fontweight='bold')
     plt.legend(loc='lower right', fontsize=12)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -117,19 +143,17 @@ def plot_roc(all_predictions, task, save_path):
 
 
 if __name__ == '__main__':
-    MODEL_DIRS = {
-        'P-STL':      os.path.join(MTL_OUTPUT_DIR, 'VREED_pstl_results'),
-        'STL':        os.path.join(MTL_OUTPUT_DIR, 'VREED_stl_results'),
-        'MTL':        os.path.join(MTL_OUTPUT_DIR, 'VREED_hps_results'),
-        'MTL+UW':     os.path.join(MTL_OUTPUT_DIR, 'VREED_hps_uw_results'),
-        'MTL+PCGrad': os.path.join(MTL_OUTPUT_DIR, 'VREED_hps_pcgrad_results'),
-    }
+    args = parse_args()
+    cfg = get_dataset_config(args.dataset)
+    prefix = cfg['results_prefix']
 
-    output_dir = os.path.join(BASE_OUTPUT_DIR, 'VREED_combined_roc_plots')
+    MODEL_DIRS = get_model_dirs(prefix)
+
+    output_dir = os.path.join(RESULTS_DIR, f'{prefix}_combined_roc_plots')
     os.makedirs(output_dir, exist_ok=True)
 
     print('=' * 60)
-    print('LOADING PREDICTIONS')
+    print(f'LOADING PREDICTIONS  ({prefix})')
     print('=' * 60)
     all_predictions = {}
     for name, path in MODEL_DIRS.items():
@@ -140,13 +164,15 @@ if __name__ == '__main__':
     print('AROUSAL ROC')
     print('=' * 60)
     ar_summary = plot_roc(all_predictions, 'AR',
-                          os.path.join(output_dir, 'combined_roc_arousal.png'))
+                          os.path.join(output_dir, 'combined_roc_arousal.png'),
+                          prefix)
 
     print('\n' + '=' * 60)
     print('VALENCE ROC')
     print('=' * 60)
     va_summary = plot_roc(all_predictions, 'VA',
-                          os.path.join(output_dir, 'combined_roc_valence.png'))
+                          os.path.join(output_dir, 'combined_roc_valence.png'),
+                          prefix)
 
     # AUC summary CSV
     rows = ([{**r, 'Task': 'AR'} for r in ar_summary] +

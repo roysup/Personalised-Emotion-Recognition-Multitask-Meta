@@ -3,7 +3,14 @@ Comprehensive Statistical Analysis
 Paired t-tests, Levene variance tests, rescue-effect correlations,
 low/high baseline group comparisons, McNemar (if available),
 and a 6-panel publication figure.
+
+Usage
+-----
+    python statistical_analysis.py                  # runs on VREED (default)
+    python statistical_analysis.py --dataset dssn_eq
+    python statistical_analysis.py --dataset dssn_em
 """
+import argparse
 import os
 import sys
 
@@ -11,22 +18,59 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
+import pickle
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import pearsonr, spearmanr, ttest_rel, ttest_ind, levene
-from config import RESULTS_DIR
+from config import get_dataset_config, RESULTS_DIR
 
-BASE_OUTPUT_DIR = RESULTS_DIR
 
-# Population-level means from PSTL results
-PSTL_AR_MEAN, PSTL_AR_STD = 0.79653353, 0.27248355
-PSTL_VA_MEAN, PSTL_VA_STD = 0.73323286, 0.21763077
+def parse_args():
+    p = argparse.ArgumentParser(description='Comprehensive statistical analysis')
+    p.add_argument('--dataset', type=str, default='vreed',
+                   choices=['vreed', 'dssn_eq', 'dssn_em'],
+                   help='Dataset to analyse (default: vreed)')
+    return p.parse_args()
+
+
+def load_pstl_stats(prefix):
+    """
+    Load PSTL per-participant results from the pickle and compute
+    population-level mean and std for AR and VA accuracy.
+
+    Returns
+    -------
+    pstl_ar_mean, pstl_ar_std, pstl_va_mean, pstl_va_std
+    """
+    pstl_pkl = os.path.join(RESULTS_DIR, f'{prefix}_MTL',
+                            f'{prefix}_pstl_results', 'pstl_results.pkl')
+    if not os.path.exists(pstl_pkl):
+        print(f'⚠ PSTL results not found: {pstl_pkl}')
+        print('  PSTL panels in the figure will use NaN.')
+        return np.nan, np.nan, np.nan, np.nan
+
+    with open(pstl_pkl, 'rb') as f:
+        pstl = pickle.load(f)
+
+    per_p = pstl.get('per_participant', [])
+    if not per_p:
+        return np.nan, np.nan, np.nan, np.nan
+
+    ar_accs = [r['ar_acc'] for r in per_p]
+    va_accs = [r['va_acc'] for r in per_p]
+    return (np.mean(ar_accs), np.std(ar_accs, ddof=1),
+            np.mean(va_accs), np.std(va_accs, ddof=1))
 
 
 if __name__ == '__main__':
-    gains_file = os.path.join(BASE_OUTPUT_DIR, 'VREED_MTL_vs_STL_Gains.csv')
+    args = parse_args()
+    cfg = get_dataset_config(args.dataset)
+    prefix = cfg['results_prefix']
+
+    # ---- Load gains file (produced by mtl_vs_stl_gains.py) ----
+    gains_file = os.path.join(RESULTS_DIR, f'{prefix}_MTL_vs_STL_Gains.csv')
     if not os.path.exists(gains_file):
         print(f'✗ Gains file not found: {gains_file}')
         print('  Run mtl_vs_stl_gains.py first.')
@@ -35,11 +79,14 @@ if __name__ == '__main__':
     gains_df = pd.read_csv(gains_file)
     n = len(gains_df)
 
+    # ---- Load PSTL population-level stats from results pickle ----
+    PSTL_AR_MEAN, PSTL_AR_STD, PSTL_VA_MEAN, PSTL_VA_STD = load_pstl_stats(prefix)
+
     # =====================================================================
     # PART 1: DESCRIPTIVE STATISTICS
     # =====================================================================
     print('\n' + '=' * 80)
-    print('PART 1: DESCRIPTIVE STATISTICS')
+    print(f'PART 1: DESCRIPTIVE STATISTICS  ({prefix})')
     print('=' * 80)
     print(f'\nSample size: n = {n} participants')
 
@@ -164,7 +211,7 @@ if __name__ == '__main__':
     print('=' * 80)
     summary_df = pd.DataFrame(results)
     print('\n' + summary_df.to_string(index=False))
-    output_csv = os.path.join(BASE_OUTPUT_DIR, 'comprehensive_statistical_summary.csv')
+    output_csv = os.path.join(RESULTS_DIR, f'{prefix}_comprehensive_statistical_summary.csv')
     summary_df.to_csv(output_csv, index=False)
     print(f'\n✓ Saved: {output_csv}')
 
@@ -174,8 +221,8 @@ if __name__ == '__main__':
     print('\n' + '=' * 80)
     print('PART 4: PARTICIPANT-LEVEL McNEMAR TESTS')
     print('=' * 80)
-    mcnemar_file = os.path.join(BASE_OUTPUT_DIR,
-        'VREED_mcnemar_participant_level', 'mcnemar_participant_weighted.csv')
+    mcnemar_file = os.path.join(RESULTS_DIR,
+        f'{prefix}_mcnemar_participant_level', 'mcnemar_participant_weighted.csv')
     mcnemar_df = None
     if os.path.exists(mcnemar_file):
         mcnemar_df = pd.read_csv(mcnemar_file)
@@ -211,7 +258,7 @@ if __name__ == '__main__':
     print('=' * 80)
 
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    fig.suptitle('Comprehensive Statistical Analysis: MTL Rescue Effect',
+    fig.suptitle(f'Comprehensive Statistical Analysis: MTL Rescue Effect ({prefix})',
                  fontsize=16, fontweight='bold')
 
     methods = ['PSTL', 'STL', 'MTL']
@@ -299,7 +346,7 @@ if __name__ == '__main__':
     low_va_mean = va_low['VA_gain_%'].mean() if len(va_low) > 0 else float('nan')
     high_va_mean = va_high['VA_gain_%'].mean() if len(va_high) > 0 else float('nan')
     summary_text = (
-        f'STATISTICAL SUMMARY\n\n'
+        f'STATISTICAL SUMMARY ({prefix})\n\n'
         f'VALENCE:\n'
         f'{"✓" if va_p_corr < 0.05 else "○"} Rescue: r={va_r:.3f}, p={va_p_corr:.4f}\n'
         f'○ Mean gain: +{gains_df["VA_gain_%"].mean():.1f}%, p={va_p_mean:.4f}\n'
@@ -320,7 +367,7 @@ if __name__ == '__main__':
             bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
 
     plt.tight_layout()
-    fig_path = os.path.join(BASE_OUTPUT_DIR, 'comprehensive_statistical_analysis.png')
+    fig_path = os.path.join(RESULTS_DIR, f'{prefix}_comprehensive_statistical_analysis.png')
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.show()
     print(f'\n✓ Saved figure: {fig_path}')
