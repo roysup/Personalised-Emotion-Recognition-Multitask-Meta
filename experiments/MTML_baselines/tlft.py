@@ -68,7 +68,7 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid, cfg, device):
     opt     = optim.Adam(model.parameters(), lr=lr, weight_decay=l2_lambda)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
-    loader  = arrays_to_loader(X, y, PSTL_BATCH_SIZE, shuffle=True, seed=SEED + pid)
+    loader  = arrays_to_loader(X, y, PSTL_BATCH_SIZE, shuffle=True, seed=SEED)
     for ep in range(epochs):
         model.train(); run = 0.0
         for X_b, y_b in loader:
