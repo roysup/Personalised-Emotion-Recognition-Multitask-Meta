@@ -28,23 +28,7 @@ def _pcgrad_project(grad_list):
 # REPTILE OUTER UPDATE
 # =============================
 
-def reptile_outer_update(model: torch.nn.Module,
-                         adapted_models: list,
-                         meta_lr: float) -> None:
-    """
-    In-place Reptile outer update: interpolate model parameters toward
-    the mean of the adapted copies.  Works for any episode size >= 1.
-
-    Replaces the two inline patterns previously scattered across four scripts:
-      ST-style  — `for p, pa in zip(model.parameters(), adapted.parameters()): p.data.add_(...)`
-      MT-style  — OrderedDict delta accumulation + named_parameters loop
-
-    Parameters
-    ----------
-    model          : nn.Module — meta-model updated in-place
-    adapted_models : list[nn.Module] — adapted copies from adapt_inner_loop / adapt()
-    meta_lr        : float — outer-loop step size
-    """
+def reptile_outer_update(model, adapted_models, meta_lr):
     with torch.no_grad():
         for name, p in model.named_parameters():
             mean_adapted = torch.stack(
@@ -59,23 +43,7 @@ def reptile_outer_update(model: torch.nn.Module,
 
 def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
                              participant_ids, device, is_mtl=False):
-    """
-    Run inference over per-participant test loaders and collect results.
-
-    Parameters
-    ----------
-    model            : nn.Module (for P-STL pass a 2-tuple (model_ar, model_va))
-    test_loaders_ar  : dict {task_idx: DataLoader}
-    test_loaders_va  : dict {task_idx: DataLoader}
-    participant_ids  : list of participant IDs indexed by task_idx
-    device           : torch.device
-    is_mtl           : bool — if True, model(X, task_ids) is called
-
-    Returns
-    -------
-    results : list of dicts, one per participant, with keys matching
-              the MTL convention: ar_acc, va_acc, y_true_ar, y_pred_probs_ar, ...
-    """
+    """Run inference over per-participant test loaders and collect results."""
     results = []
 
     if isinstance(model, tuple):
@@ -163,11 +131,8 @@ def evaluate_per_participant(model, test_loaders_ar, test_loaders_va,
 
 def evaluate_stl_all(models_ar, models_va, test_data_dict,
                      participant_ids, device,
-                     window_size=2560, stride=1280):
-    """
-    Evaluate per-participant STL models over raw test DataFrames.
-    Returns per-participant result dicts using the standard MTL key convention.
-    """
+                     window_size=2560, stride=1280, feature_cols=None):
+    """Evaluate per-participant STL models over raw test DataFrames."""
     from data import create_sliding_windows
 
     results = []
@@ -178,7 +143,8 @@ def evaluate_stl_all(models_ar, models_va, test_data_dict,
         if test_df is None or len(test_df) == 0:
             continue
         X, y_ar, y_va, _, _ = create_sliding_windows(
-            test_df, window_size, stride, task_id=task_idx)
+            test_df, window_size, stride, task_id=task_idx,
+            feature_cols=feature_cols)
         if len(X) == 0:
             continue
 
@@ -223,11 +189,6 @@ def evaluate_stl_all(models_ar, models_va, test_data_dict,
 def adapt_inner_loop(base_model, head, sup_loader, ar_or_va,
                      inner_steps, inner_lr, device,
                      l2_shared=0.0, l2_task=1e-5):
-    """
-    Reptile / MAML-style inner-loop adaptation for one participant.
-    Deep-copies both backbone and head, adapts on the support set,
-    and returns the adapted copies (originals unchanged).
-    """
     import copy
     from torch.optim.lr_scheduler import ReduceLROnPlateau
 
@@ -262,18 +223,14 @@ def adapt_inner_loop(base_model, head, sup_loader, ar_or_va,
 
 def evaluate_test_user(base_model, head, test_df, splits, uid, ar_or_va,
                        device, inner_steps, inner_lr,
-                       l2_shared=0.0, l2_task=1e-5):
-    """
-    Adapt the meta-learned backbone to one test participant and evaluate.
-
-    Returns a result dict with prefixed keys matching the MTML key convention:
-      {ar_or_va}_acc, {ar_or_va}_f1, y_true_{ar_or_va}, y_pred_probs_{ar_or_va}, ...
-    Returns None if no query windows are available.
-    """
+                       l2_shared=0.0, l2_task=1e-5,
+                       window_size=2560, stride=1280, feature_cols=None):
+    """Adapt and evaluate on one test participant."""
     from data import build_support_query
 
     sup_loader, q_loader = build_support_query(
-        test_df, splits[uid]['train'], splits[uid]['test'], ar_or_va)
+        test_df, splits[uid]['train'], splits[uid]['test'], ar_or_va,
+        window_size=window_size, stride=stride, feature_cols=feature_cols)
 
     if len(q_loader.dataset) == 0:
         return None
@@ -316,11 +273,8 @@ def evaluate_test_user(base_model, head, test_df, splits, uid, ar_or_va,
 
 def evaluate_mtl_all(model_ar, model_va, test_data_dict,
                      participant_ids, device,
-                     window_size=2560, stride=1280):
-    """
-    Evaluate a pair of MTL models over per-participant test sets.
-    Returns per-participant result dicts using the standard MTL key convention.
-    """
+                     window_size=2560, stride=1280, feature_cols=None):
+    """Evaluate a pair of MTL models over per-participant test sets."""
     from data import create_sliding_windows
 
     results = []
@@ -329,7 +283,8 @@ def evaluate_mtl_all(model_ar, model_va, test_data_dict,
         if test_df is None or len(test_df) == 0:
             continue
         X, y_ar, y_va, _, _ = create_sliding_windows(
-            test_df, window_size, stride, task_id=task_idx)
+            test_df, window_size, stride, task_id=task_idx,
+            feature_cols=feature_cols)
         if len(X) == 0:
             continue
 
@@ -370,17 +325,20 @@ def evaluate_mtl_all(model_ar, model_va, test_data_dict,
 # =============================
 
 def save_all_results(results, agg, output_dir, method_name, misclassification_csv):
-    """
-    Save the full results bundle produced by any MTL/MTML training script.
-    """
     import os
     from utils import (save_misclassification_rates, build_results_table,
                        compute_per_participant_stds, print_determinism_summary,
                        print_metrics_detailed, save_confusion_matrix_plot,
                        save_roc_plot)
 
+    participant_ids_map = {
+        r['task_idx']: r['participant_id']
+        for r in results
+        if 'task_idx' in r and 'participant_id' in r
+    }
+
     save_misclassification_rates(
-        results, [r['participant_id'] for r in results],
+        results, participant_ids_map,
         os.path.join(output_dir, misclassification_csv))
 
     results_df = build_results_table(results)

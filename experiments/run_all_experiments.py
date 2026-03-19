@@ -1,7 +1,7 @@
 """
 Run All Experiments — Sequential Execution
 Runs each experiment script one after the other via subprocess.
-Skips pstl.py (already run). Logs stdout/stderr per experiment and
+Logs stdout/stderr per experiment and
 prints a summary with pass/fail and elapsed time at the end.
 """
 import os
