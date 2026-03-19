@@ -134,13 +134,15 @@ def build_support_query(task_df, support_trials, query_trials, ar_or_va='ar',
     X_q_t   = torch.tensor(Xq).float()
     y_q_t   = torch.tensor(y_q).float().unsqueeze(1)
 
+    pin = torch.cuda.is_available()
     g = torch.Generator()
     g.manual_seed(seed)
     sup_loader = DataLoader(TensorDataset(X_sup_t, y_sup_t),
                             batch_size=8, shuffle=True,
-                            generator=g, num_workers=0)
+                            generator=g, num_workers=0, pin_memory=pin)
     q_loader   = DataLoader(TensorDataset(X_q_t, y_q_t),
-                            batch_size=32, shuffle=False, num_workers=0)
+                            batch_size=32, shuffle=False, num_workers=0,
+                            pin_memory=pin)
     return sup_loader, q_loader
 
 
@@ -223,8 +225,9 @@ def make_mtl_loader(tasks_dict, window_size, stride,
     dataset = TensorDataset(X_t, y_t, tids_t, trids_t)
     sampler = BalancedSampler(all_task_ids, list(samples_per_task.keys()),
                               samples_per_task, seed=seed)
+    pin = torch.cuda.is_available()
     loader  = DataLoader(dataset, batch_size=batch_size,
-                         sampler=sampler, num_workers=0)
+                         sampler=sampler, num_workers=0, pin_memory=pin)
     return loader, len(dataset), sampler
 
 

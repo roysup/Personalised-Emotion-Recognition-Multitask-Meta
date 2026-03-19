@@ -65,7 +65,7 @@ def _meta_train(label_type, df, splits, train_ps, cfg, device, output_dir):
             adapted_heads.append(ah)
 
         # Meta-update: average adapted weights back toward base
-        meta_opt.zero_grad()
+        meta_opt.zero_grad(set_to_none=True)
         with torch.no_grad():
             for name, p in base.named_parameters():
                 mean_adapted = torch.stack(
