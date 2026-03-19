@@ -4,6 +4,7 @@ Runs each experiment script one after the other via subprocess.
 Logs stdout/stderr per experiment and
 prints a summary with pass/fail and elapsed time at the end.
 """
+import argparse
 import os
 import sys
 import subprocess
@@ -31,17 +32,29 @@ EXPERIMENTS = [
 ]
 
 
-def run_experiment(folder, script):
+def parse_args():
+    p = argparse.ArgumentParser(description='Run all experiment scripts sequentially.')
+    p.add_argument(
+        '--dataset',
+        type=str,
+        default='vreed',
+        choices=['vreed', 'dssn_eq', 'dssn_em'],
+        help='Dataset to pass to each experiment script (default: vreed).',
+    )
+    return p.parse_args()
+
+
+def run_experiment(folder, script, dataset):
     """Run a single experiment script and return (success, elapsed_seconds)."""
     script_path = os.path.join(REPO_ROOT, 'experiments', folder, script)
     label = f"{folder}/{script}"
     print(f"\n{'='*70}")
-    print(f"  STARTING: {label}")
+    print(f"  STARTING: {label}  (dataset={dataset})")
     print(f"{'='*70}\n")
 
     t0 = time.time()
     result = subprocess.run(
-        [sys.executable, script_path],
+        [sys.executable, script_path, '--dataset', dataset],
         cwd=REPO_ROOT,
         stdout=sys.stdout,
         stderr=sys.stderr,
@@ -57,11 +70,12 @@ def run_experiment(folder, script):
 
 
 if __name__ == '__main__':
+    args = parse_args()
     total_t0 = time.time()
     summary = []
 
     for folder, script in EXPERIMENTS:
-        success, elapsed = run_experiment(folder, script)
+        success, elapsed = run_experiment(folder, script, args.dataset)
         summary.append((f"{folder}/{script}", success, elapsed))
 
     total_elapsed = time.time() - total_t0
