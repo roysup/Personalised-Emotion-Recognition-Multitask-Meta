@@ -17,7 +17,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if os.path.join(_REPO_ROOT, 'src') not in sys.path:
     sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 
-from config import VREED_SPLITS, HARDCODED_SPLITS, CSV_PATH, PKL_PATH
+from config import VREED_SPLITS, CSV_PATH, PKL_PATH
 
 participant_ids = sorted(VREED_SPLITS.keys())
 

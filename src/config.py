@@ -104,13 +104,10 @@ VREED_SPLITS = {
     116: {'train': [2, 10, 12, 1, 6, 5, 7, 3, 9, 4], 'test': [8, 11]},
 }
 
-# Backward-compatible alias — existing VREED scripts import HARDCODED_SPLITS
-HARDCODED_SPLITS = VREED_SPLITS
-
 # =============================
 # DSSN_EQ 5/1 TRAIN/TEST SPLITS  (34 participants, IDs 2,5,8,9,10-39)
 # =============================
-DSSN_EQ_SPLITS = hardcoded_splits = {
+DSSN_EQ_SPLITS = {
         2: {'train': [3, 5, 1, 6, 4], 'test': [2]},
         5: {'train': [6, 2, 5, 1, 4], 'test': [3]},
         8: {'train': [6, 5, 3, 4, 2], 'test': [1]},
@@ -189,7 +186,7 @@ DSSN_EM_SPLITS = {
 # ==============================================================================
 # Each dataset config is a dict with all parameters that differ across datasets.
 # Experiment scripts call get_dataset_config(name) instead of hard-wiring values.
-# VREED scripts that import bare names (WINDOW_SIZE, HARDCODED_SPLITS, etc.)
+# VREED scripts that import bare names (WINDOW_SIZE, VREED_SPLITS, etc.)
 # continue to work unchanged — those module-level constants are the VREED defaults.
 # ==============================================================================
 
