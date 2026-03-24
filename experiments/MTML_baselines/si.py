@@ -41,7 +41,7 @@ def parse_args():
 
 def train_model(frames, labels, lr, l2_lambda, cfg, device, epochs=EPOCHS):
     model   = SingleTaskModel(input_dim=cfg['input_dim']).to(device)
-    opt     = optim.Adam(model.parameters(), lr=lr, weight_decay=l2_lambda)
+    opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
     loader  = arrays_to_loader(frames, labels, cfg['pstl_batch'], shuffle=True, seed=SEED)
@@ -51,11 +51,13 @@ def train_model(frames, labels, lr, l2_lambda, cfg, device, epochs=EPOCHS):
             X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b), y_b)
-            if torch.isnan(loss):
+            l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
+            total = loss + l2_reg
+            if torch.isnan(total):
                 raise ValueError(f"NaN at epoch {epoch+1}")
-            loss.backward()
+            total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
-            opt.step(); run += loss.item()
+            opt.step(); run += total.item()
         sched.step(run / len(loader))
     return model
 

@@ -44,7 +44,7 @@ def _get_windows(sub_df, label_type, cfg):
 
 def pretrain(X, y, lr, l2_lambda, epochs, cfg, device):
     model   = SingleTaskModel(input_dim=cfg['input_dim']).to(device)
-    opt     = optim.Adam(model.parameters(), lr=lr, weight_decay=l2_lambda)
+    opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
     loader  = arrays_to_loader(X, y, PSTL_BATCH_SIZE, shuffle=True, seed=SEED)
@@ -54,10 +54,12 @@ def pretrain(X, y, lr, l2_lambda, epochs, cfg, device):
             X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b), y_b)
-            if torch.isnan(loss): raise ValueError(f"NaN in pretrain [ep {ep+1}]")
-            loss.backward()
+            l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
+            total = loss + l2_reg
+            if torch.isnan(total): raise ValueError(f"NaN in pretrain [ep {ep+1}]")
+            total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
-            opt.step(); run += loss.item()
+            opt.step(); run += total.item()
         sched.step(run / len(loader))
     return model
 
@@ -65,7 +67,7 @@ def pretrain(X, y, lr, l2_lambda, epochs, cfg, device):
 def finetune(base_model, X, y, lr, l2_lambda, epochs, pid, cfg, device):
     model = SingleTaskModel(input_dim=cfg['input_dim']).to(device)
     model.load_state_dict(copy.deepcopy(base_model.state_dict()))
-    opt     = optim.Adam(model.parameters(), lr=lr, weight_decay=l2_lambda)
+    opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
     loss_fn = nn.BCEWithLogitsLoss()
     loader  = arrays_to_loader(X, y, PSTL_BATCH_SIZE, shuffle=True, seed=SEED)
@@ -75,10 +77,12 @@ def finetune(base_model, X, y, lr, l2_lambda, epochs, pid, cfg, device):
             X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b), y_b)
-            if torch.isnan(loss): raise ValueError(f"NaN finetune [pid {pid}, ep {ep+1}]")
-            loss.backward()
+            l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
+            total = loss + l2_reg
+            if torch.isnan(total): raise ValueError(f"NaN finetune [pid {pid}, ep {ep+1}]")
+            total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
-            opt.step(); run += loss.item()
+            opt.step(); run += total.item()
         sched.step(run / len(loader))
     return model
 

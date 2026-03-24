@@ -51,7 +51,7 @@ def _make_pool_loader(data_df, label_type, cfg, shuffle):
 
 def _train_single(label_type, lr, l2_lambda, train_df, cfg, device):
     model   = SingleTaskModel(input_dim=cfg['input_dim']).to(device)
-    opt     = optim.Adam(model.parameters(), lr=lr, weight_decay=l2_lambda)
+    opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.1, patience=3)
     loss_fn = nn.BCEWithLogitsLoss()
 
@@ -66,12 +66,14 @@ def _train_single(label_type, lr, l2_lambda, train_df, cfg, device):
             X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b), y_b)
-            if torch.isnan(loss):
+            l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
+            total = loss + l2_reg
+            if torch.isnan(total):
                 raise ValueError(f"NaN at epoch {epoch+1} [{label_type.upper()}]")
-            loss.backward()
+            total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             opt.step()
-            running += loss.item()
+            running += total.item()
         sched.step(running / len(loader))
         elapsed = time.time() - ep_start
         if (epoch + 1) % 5 == 0 or epoch == 0:
@@ -111,7 +113,7 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas,
                     fold_f1s.append(0.0); continue
 
                 model   = SingleTaskModel(input_dim=cfg['input_dim']).to(device)
-                opt     = optim.Adam(model.parameters(), lr=lr, weight_decay=l2)
+                opt     = optim.Adam(model.parameters(), lr=lr)
                 sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
                 loss_fn = nn.BCEWithLogitsLoss()
 
@@ -127,9 +129,11 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas,
                         X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
                         opt.zero_grad(set_to_none=True)
                         loss = loss_fn(model(X_b), y_b)
-                        loss.backward()
+                        l2_reg = l2 * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
+                        total = loss + l2_reg
+                        total.backward()
                         torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
-                        opt.step(); run += loss.item()
+                        opt.step(); run += total.item()
                     sched.step(run / len(tr_loader))
 
                     model.eval()
