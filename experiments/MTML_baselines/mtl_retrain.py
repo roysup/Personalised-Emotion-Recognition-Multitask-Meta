@@ -1,6 +1,7 @@
 """
-MTL Retrain — Pre-train MTL on train participants, then retrain fresh
-task heads per test participant while keeping the shared backbone frozen.
+MTL Retrain — For each test participant, train a fresh MTLModel from scratch
+on all train participants + that one test participant (using train videos).
+Evaluate the test participant using their task-specific head on held-out test videos.
 
 Usage
 -----
@@ -8,25 +9,26 @@ Usage
     python mtl_retrain.py --dataset dssn_eq
 """
 import argparse
-import os, sys, time, copy
+import os, sys, time, gc
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
-from config import (SEED, EPOCHS, MAX_NORM, FT_EPOCHS,
-                    MTL_SHARED_LR, MTL_TASK_LR,
+from config import (SEED, EPOCHS, MAX_NORM, N_FOLDS,
+                    MTL_SHARED_LR,
                     L2_SHARED, L2_TASK, RESULTS_DIR)
 import numpy as np
 import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from data import make_mtl_loader, build_support_query
+from sklearn.metrics import confusion_matrix, f1_score
+from data import create_sliding_windows, make_mtl_loader
 from dataset_configs.loader import load_dataset
-from models import MTLModel, TaskHead, BaseFeatureExtractor
-from utils import (set_all_seeds, aggregate_mtml_results,
-                   compute_per_participant_stds, print_determinism_summary)
-from training import evaluate_test_user
+from models import MTLModel
+from utils import (set_all_seeds, compute_metrics_from_cm, make_kfolds,
+                   aggregate_mtml_results, compute_per_participant_stds,
+                   print_determinism_summary)
 
 
 def parse_args():
@@ -36,113 +38,165 @@ def parse_args():
     return p.parse_args()
 
 
-def _pretrain_mtl(label_type, train_data_dict, cfg, device, output_dir):
-    """Pre-train MTL model on train participants only."""
-    num_train = len(train_data_dict)
-    loader, _, _ = make_mtl_loader(
-        train_data_dict, cfg['window_size'], cfg['stride'],
-        label_type=label_type, batch_size=cfg['mtl_batch'], seed=SEED,
-        feature_cols=cfg['feature_cols'])
+# =============================
+# HYPERPARAMETER TUNING
+# =============================
+def hyperparameter_tuning(label_type, df, cfg, device, output_dir):
+    """K-fold CV on train participants to find best LR.
+    
+    Mirrors the final training approach: for each fold, train an MTL model
+    on tr_ps + val_ps jointly (using train videos), then evaluate val
+    participants via their own task heads on their held-out test videos.
+    """
+    splits   = cfg['splits']
+    train_ps = cfg['train_participants']
+    print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type.upper()}] MTL-Retrain"
+          f"  ({cfg['results_prefix']})\n{'='*60}")
+    print(f"  L2: Shared={L2_SHARED}, Task={L2_TASK}")
 
-    model   = MTLModel(num_train, input_dim=cfg['input_dim']).to(device)
-    opt     = optim.Adam([
-        {'params': model.shared_parameters(),        'lr': MTL_SHARED_LR},
-        {'params': model.task_specific_parameters(), 'lr': MTL_TASK_LR},
-    ])
+    results = []
+    train_folds = make_kfolds(train_ps, seed=SEED)
+
+    for lr in [MTL_SHARED_LR]:
+        fold_f1s = []
+        print(f"\nTesting LR={lr}")
+
+        for fold_i in range(N_FOLDS):
+            print(f"  Processing Fold {fold_i + 1}/{N_FOLDS}")
+            val_ps = train_folds[fold_i]
+            tr_ps  = [p for j, f in enumerate(train_folds) if j != fold_i for p in f]
+
+            # Build combined data dict: tr_ps then val_ps, all using train videos
+            all_fold_ps = sorted(tr_ps) + sorted(val_ps)
+            all_data = {}
+            pid_to_task = {}
+            for idx, pid in enumerate(all_fold_ps):
+                p_df = df[df['ID'] == pid].reset_index(drop=True)
+                all_data[idx] = p_df[p_df['Trial'].isin(
+                    splits[pid]['train'])].reset_index(drop=True)
+                pid_to_task[pid] = idx
+
+            loader, _, _ = make_mtl_loader(
+                all_data, cfg['window_size'], cfg['stride'],
+                label_type=label_type, batch_size=len(all_data),
+                seed=SEED, feature_cols=cfg['feature_cols'])
+
+            model = MTLModel(len(all_data),
+                             input_dim=cfg['input_dim']).to(device)
+            opt   = optim.Adam(model.parameters(), lr=lr)
+            sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
+            loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+
+            for ep in range(EPOCHS):
+                model.train()
+                run = 0.0
+                for batch in loader:
+                    X_b, y_b, tids, _ = [b.to(device) for b in batch]
+                    opt.zero_grad(set_to_none=True)
+                    loss_vec = loss_fn(model(X_b, tids), y_b).squeeze(-1)
+                    l2 = model.compute_l2(L2_SHARED, L2_TASK)
+                    total = loss_vec.mean() + l2
+                    total.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
+                    opt.step()
+                    run += total.item()
+                sched.step(run / len(loader))
+
+            # Evaluate val participants using their own heads on TEST videos
+            model.eval()
+            all_preds, all_labels = [], []
+            with torch.no_grad():
+                for pid in sorted(val_ps):
+                    task_idx = pid_to_task[pid]
+                    test_df = df[(df['ID'] == pid) & df['Trial'].isin(
+                        splits[pid]['test'])].reset_index(drop=True)
+                    if len(test_df) == 0:
+                        continue
+                    X_v, y_ar_v, y_va_v, _, _ = create_sliding_windows(
+                        test_df, cfg['window_size'], cfg['stride'],
+                        task_id=task_idx, feature_cols=cfg['feature_cols'])
+                    if len(X_v) == 0:
+                        continue
+                    y_v = y_ar_v if label_type == 'ar' else y_va_v
+                    X_t = torch.tensor(X_v, dtype=torch.float32).to(device)
+                    tids = torch.full((len(X_v),), task_idx, dtype=torch.long).to(device)
+                    probs = torch.sigmoid(model(X_t, tids)).cpu().numpy().flatten()
+                    all_preds.extend((probs > 0.5).astype(int))
+                    all_labels.extend(y_v.astype(int))
+
+            if len(all_labels) > 0:
+                f1 = f1_score(all_labels, all_preds, average='macro', zero_division=0)
+            else:
+                f1 = 0.0
+            fold_f1s.append(f1)
+            print(f"  Fold {fold_i + 1}: Val F1 = {f1:.4f}")
+
+            del model, loader
+            torch.cuda.empty_cache()
+            gc.collect()
+
+        avg = np.mean(fold_f1s)
+        results.append({'lr': lr, 'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
+        print(f"  Average F1: {avg:.4f}")
+
+    best = max(results, key=lambda x: x['avg_f1'])
+    with open(os.path.join(output_dir, f'{label_type}_tuning_results_mtl.pkl'), 'wb') as f:
+        pickle.dump({'all': results, 'best': best}, f)
+    return best['lr']
+
+
+# =============================
+# TRAINING
+# =============================
+def _train_mtl(label_type, lr, data_dict, cfg, device, output_dir, ckpt_tag):
+    """Train MTLModel on the given participants jointly."""
+    num_tasks = len(data_dict)
+    loader, _, _ = make_mtl_loader(
+        data_dict, cfg['window_size'], cfg['stride'],
+        label_type=label_type, batch_size=num_tasks,
+        seed=SEED, feature_cols=cfg['feature_cols'])
+
+    model   = MTLModel(num_tasks, input_dim=cfg['input_dim']).to(device)
+    opt     = optim.Adam(model.parameters(), lr=lr)
     sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
-    loss_fn = nn.BCEWithLogitsLoss()
+    loss_fn = nn.BCEWithLogitsLoss(reduction='none')
     best_loss = float('inf')
-    ckpt = os.path.join(output_dir, f'pretrain_{label_type}.pt')
+    ckpt = os.path.join(output_dir, f'mtl_best_{label_type}_{ckpt_tag}.pt')
 
     for epoch in range(EPOCHS):
-        model.train(); running = 0.0
+        model.train()
+        running = 0.0
         for batch in loader:
-            X_b, y_b, task_ids, _ = [b.to(device, non_blocking=True) for b in batch]
+            X_b, y_b, tids, _ = [b.to(device) for b in batch]
             opt.zero_grad(set_to_none=True)
-            loss = loss_fn(model(X_b, task_ids), y_b)
-            total = loss + model.compute_l2(L2_SHARED, L2_TASK)
-            if torch.isnan(total): raise ValueError(f"NaN ep {epoch+1} [{label_type}]")
+            loss_vec = loss_fn(model(X_b, tids), y_b).squeeze(-1)
+            l2 = model.compute_l2(L2_SHARED, L2_TASK)
+            total = loss_vec.mean() + l2
+            if torch.isnan(total):
+                raise ValueError(f"NaN at epoch {epoch+1} [{label_type.upper()}]")
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
-            opt.step(); running += total.item()
+            opt.step()
+            running += total.item()
+
         avg = running / len(loader)
         sched.step(avg)
         if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"  [{label_type.upper()}] Epoch {epoch+1}/{EPOCHS}  loss={avg:.4f}")
+            print(f"    [{label_type.upper()}] Epoch {epoch+1}/{EPOCHS}  loss={avg:.4f}")
         if avg < best_loss:
-            best_loss = avg; torch.save(model.state_dict(), ckpt)
+            best_loss = avg
+            torch.save(model.state_dict(), ckpt)
 
     model.load_state_dict(torch.load(ckpt, weights_only=True))
-
-    # Extract shared backbone as BaseFeatureExtractor
-    base = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
-    base.conv1.load_state_dict(model.conv1.state_dict())
-    base.bn1.load_state_dict(model.bn1.state_dict())
-    base.conv2.load_state_dict(model.conv2.state_dict())
-    base.bn2.load_state_dict(model.bn2.state_dict())
-    base.lstm.load_state_dict(model.lstm.state_dict())
-    return base
+    # Clean up checkpoint
+    if os.path.exists(ckpt):
+        os.remove(ckpt)
+    return model
 
 
-def _retrain_head_and_eval(base_model, test_df, splits, uid, label_type,
-                           cfg, device, inner_steps, inner_lr):
-    """Freeze backbone, train a new TaskHead, evaluate."""
-    sup_loader, q_loader = build_support_query(
-        test_df, splits[uid]['train'], splits[uid]['test'], label_type,
-        window_size=cfg['window_size'], stride=cfg['stride'],
-        feature_cols=cfg['feature_cols'])
-    if len(q_loader.dataset) == 0:
-        return None
-
-    frozen_base = copy.deepcopy(base_model).to(device)
-    frozen_base.eval()
-    for p in frozen_base.parameters():
-        p.requires_grad = False
-
-    head    = TaskHead().to(device)
-    opt     = optim.Adam(head.parameters(), lr=inner_lr)
-    sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
-    loss_fn = nn.BCEWithLogitsLoss()
-
-    for step in range(inner_steps):
-        head.train(); ep_loss = 0.0; nb = 0
-        for Xb, yb in sup_loader:
-            Xb, yb = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
-            opt.zero_grad(set_to_none=True)
-            with torch.no_grad():
-                feat = frozen_base(Xb)
-            loss = loss_fn(head(feat), yb)
-            l2 = L2_TASK * sum(p.norm(2)**2 for p in head.parameters() if p.requires_grad)
-            total = loss + l2
-            total.backward()
-            torch.nn.utils.clip_grad_norm_(head.parameters(), MAX_NORM)
-            opt.step(); ep_loss += total.item(); nb += 1
-        if nb > 0: sched.step(ep_loss / nb)
-
-    frozen_base.eval(); head.eval()
-    from sklearn.metrics import confusion_matrix
-    from utils import compute_metrics_from_cm
-    probs, labels = [], []
-    with torch.no_grad():
-        for Xb, yb in q_loader:
-            out = head(frozen_base(Xb.to(device, non_blocking=True)))
-            probs.extend(torch.sigmoid(out).cpu().numpy().flatten())
-            labels.extend(yb.numpy().flatten())
-    y_true = np.array(labels).astype(int)
-    y_prob = np.array(probs)
-    y_pred = (y_prob > 0.5).astype(int)
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    acc, prec, rec, f1 = compute_metrics_from_cm(cm)
-    p = label_type
-    return {
-        'participant_id': uid, 'cm': cm,
-        f'{p}_acc': acc, f'{p}_precision': prec,
-        f'{p}_recall': rec, f'{p}_f1': f1,
-        f'y_true_{p}': y_true, f'y_pred_{p}': y_pred,
-        f'y_pred_probs_{p}': y_prob,
-    }
-
-
+# =============================
+# MAIN
+# =============================
 if __name__ == '__main__':
     args = parse_args()
     experiment_t0 = time.time()
@@ -158,48 +212,107 @@ if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     set_all_seeds(SEED)
-    if device.type == 'cuda': torch.backends.cudnn.benchmark = True
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
     print(f"Device: {device}\nDataset: {args.dataset}\nOutput: {output_dir}")
     print(f"Train: {train_ps}\nTest:  {test_ps}")
+    print(f"\nL2: Shared={L2_SHARED}, Task={L2_TASK}")
 
-    # Build train data dict keyed by task_idx
-    train_data = {}
+    # Hyperparameter tuning on train participants only
+    best_lr_ar = hyperparameter_tuning('ar', df, cfg, device, output_dir)
+    best_lr_va = hyperparameter_tuning('va', df, cfg, device, output_dir)
+
+    # Build base train data (train participants' train videos)
+    base_train_data = {}
     for idx, pid in enumerate(sorted(train_ps)):
         p_df = df[df['ID'] == pid].reset_index(drop=True)
-        train_data[idx] = p_df[p_df['Trial'].isin(splits[pid]['train'])].reset_index(drop=True)
+        base_train_data[idx] = p_df[p_df['Trial'].isin(
+            splits[pid]['train'])].reset_index(drop=True)
+    num_base = len(base_train_data)
 
-    for lt in ['ar', 'va']:
-        print(f"\n{'='*60}\nPRETRAINING {lt.upper()}\n{'='*60}")
+    # Per-test-participant: train fresh model on train_ps + this test participant, then evaluate
+    print(f"\n{'='*60}\nTRAINING + EVALUATION (per test participant)\n{'='*60}")
+
+    results_ar, results_va = [], []
+
+    for uid in sorted(test_ps):
+        if uid not in splits:
+            continue
+        print(f"\n--- Test Participant {uid} ---")
+
+        # Build data dict: all train participants + this one test participant
+        data_dict = dict(base_train_data)  # shallow copy, indices 0..num_base-1
+        test_task_idx = num_base  # test participant gets the last task index
+        p_df = df[df['ID'] == uid].reset_index(drop=True)
+        data_dict[test_task_idx] = p_df[p_df['Trial'].isin(
+            splits[uid]['train'])].reset_index(drop=True)
+
+        # Train + evaluate AR
         set_all_seeds(SEED)
-        base = _pretrain_mtl(lt, train_data, cfg, device, output_dir)
-        torch.save(base.state_dict(), os.path.join(output_dir, f'base_{lt}.pth'))
+        model_ar = _train_mtl('ar', best_lr_ar, data_dict, cfg, device,
+                              output_dir, ckpt_tag=f'p{uid}')
+        model_ar.eval()
+        with torch.no_grad():
+            test_df = p_df[p_df['Trial'].isin(splits[uid]['test'])].reset_index(drop=True)
+            X, y_ar, y_va, _, _ = create_sliding_windows(
+                test_df, cfg['window_size'], cfg['stride'],
+                task_id=test_task_idx, feature_cols=cfg['feature_cols'])
+            if len(X) > 0:
+                X_t  = torch.tensor(X, dtype=torch.float32).to(device)
+                tids = torch.full((len(X),), test_task_idx, dtype=torch.long).to(device)
+                probs_ar = torch.sigmoid(model_ar(X_t, tids)).cpu().numpy().flatten()
+                preds_ar = (probs_ar > 0.5).astype(int)
+                labels_ar = y_ar.astype(int)
+                cm_ar = confusion_matrix(labels_ar, preds_ar, labels=[0, 1])
+                acc_ar, prec_ar, rec_ar, f1_ar = compute_metrics_from_cm(cm_ar)
+                results_ar.append({
+                    'participant_id': uid, 'cm': cm_ar,
+                    'ar_acc': acc_ar, 'ar_precision': prec_ar,
+                    'ar_recall': rec_ar, 'ar_f1': f1_ar,
+                    'y_true_ar': labels_ar, 'y_pred_ar': preds_ar,
+                    'y_pred_probs_ar': probs_ar,
+                })
 
-        results = []
-        for uid in sorted(test_ps):
-            if uid not in splits: continue
-            t_df = df[df['ID'] == uid].reset_index(drop=True)
-            r = _retrain_head_and_eval(base, t_df, splits, uid, lt, cfg, device,
-                                       inner_steps=FT_EPOCHS, inner_lr=MTL_TASK_LR)
-            if r is not None:
-                results.append(r)
-                print(f"  P{uid}: {lt.upper()} Acc={r[f'{lt}_acc']:.4f} F1={r[f'{lt}_f1']:.4f}")
+        # Train + evaluate VA
+        set_all_seeds(SEED)
+        model_va = _train_mtl('va', best_lr_va, data_dict, cfg, device,
+                              output_dir, ckpt_tag=f'p{uid}')
+        model_va.eval()
+        with torch.no_grad():
+            if len(X) > 0:
+                probs_va = torch.sigmoid(model_va(X_t, tids)).cpu().numpy().flatten()
+                preds_va = (probs_va > 0.5).astype(int)
+                labels_va = y_va.astype(int)
+                cm_va = confusion_matrix(labels_va, preds_va, labels=[0, 1])
+                acc_va, prec_va, rec_va, f1_va = compute_metrics_from_cm(cm_va)
+                results_va.append({
+                    'participant_id': uid, 'cm': cm_va,
+                    'va_acc': acc_va, 'va_precision': prec_va,
+                    'va_recall': rec_va, 'va_f1': f1_va,
+                    'y_true_va': labels_va, 'y_pred_va': preds_va,
+                    'y_pred_probs_va': probs_va,
+                })
 
-        if lt == 'ar':
-            results_ar = results
-        else:
-            results_va = results
+        if len(X) > 0:
+            print(f"  AR Acc={acc_ar:.4f} F1={f1_ar:.4f} | "
+                  f"VA Acc={acc_va:.4f} F1={f1_va:.4f}")
 
+        del model_ar, model_va
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    # Aggregate
     agg = aggregate_mtml_results(results_ar, results_va)
-    roc_data = {'AR': {'true': agg['all_true_ar'], 'probs': agg['all_probs_ar']},
-                'VA': {'true': agg['all_true_va'], 'probs': agg['all_probs_va']}}
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
-        pickle.dump(roc_data, f)
+        pickle.dump({'AR': {'true': agg['all_true_ar'], 'probs': agg['all_probs_ar']},
+                     'VA': {'true': agg['all_true_va'], 'probs': agg['all_probs_va']}}, f)
 
     ar_stds = compute_per_participant_stds(results_ar, 'ar')
     va_stds = compute_per_participant_stds(results_va, 'va')
 
     final = {
         'train_participants': train_ps, 'test_participants': test_ps,
+        'best_hyperparameters': {'AR': {'lr': best_lr_ar}, 'VA': {'lr': best_lr_va}},
         **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
         **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
         **ar_stds, **va_stds,

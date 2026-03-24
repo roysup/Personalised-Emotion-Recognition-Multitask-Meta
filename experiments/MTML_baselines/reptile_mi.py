@@ -1,9 +1,10 @@
 """
-Reptile Model-Independent (MI)
-Each train participant has an independent model (backbone + head).
-Reptile outer loop averages ALL parameters (backbone + head) across episode
-participants. At test time: fresh copy of the meta-initialised model,
-adapted per test participant.
+Reptile MI — Mutual-Information-guided episode sampling.
+Computes pairwise MI between participants using discretised ECG/GSR/label
+distributions, then selects episodes with a mix of similar and diverse
+participants relative to an anchor. Multi-participant episodes (EPISODE_SIZE),
+backbone-only outer update. Heads are kept per-participant and updated
+individually.
 
 Usage
 -----
@@ -11,19 +12,18 @@ Usage
     python reptile_mi.py --dataset dssn_eq
 """
 import argparse
-import os, sys, time, copy, random
+import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
-from config import (SEED, MAX_NORM, META_STEPS, META_LR,
+from config import (SEED, META_STEPS, META_LR,
                     INNER_STEPS, INNER_LR, EPISODE_SIZE,
                     L2_SHARED, L2_TASK, RESULTS_DIR)
 import numpy as np
 import pickle
 import torch
-import torch.nn as nn
-import torch.optim as optim
+from sklearn.metrics import mutual_info_score
 from data import build_support_query
 from dataset_configs.loader import load_dataset
 from models import BaseFeatureExtractor, TaskHead
@@ -39,42 +39,176 @@ def parse_args():
     return p.parse_args()
 
 
-def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir):
-    """Reptile-MI: outer update on both backbone and head."""
-    base = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
-    head = TaskHead().to(device)
-    rng  = random.Random(SEED)
+# ================================================================
+# MI-GUIDED TASK EPISODES
+# ================================================================
+
+def _digitize_series(x, n_bins=16):
+    """Discretize a continuous 1D signal into bins for MI computation."""
+    x = np.asarray(x).reshape(-1)
+    if len(x) == 0:
+        return np.zeros(1, dtype=int)
+    x_min, x_max = np.min(x), np.max(x)
+    if np.isclose(x_min, x_max):
+        return np.zeros_like(x, dtype=int)
+    bins = np.linspace(x_min, x_max, n_bins + 1)
+    return np.digitize(x, bins[1:-1], right=False).astype(int)
+
+
+def _compute_task_mi_signature(task_df, label_type='ar', feature_cols=None,
+                                max_points=20000):
+    """Build a discretised task-level signature for MI computation."""
+    if feature_cols is None:
+        feature_cols = ['ECG', 'GSR']
+
+    df_local = task_df.copy()
+    if len(df_local) > max_points:
+        idx = np.linspace(0, len(df_local) - 1, max_points).astype(int)
+        df_local = df_local.iloc[idx].reset_index(drop=True)
+
+    disc_cols = []
+    for col in feature_cols:
+        disc_cols.append(_digitize_series(df_local[col].values, n_bins=16))
+
+    y_col = 'AR_Rating' if label_type == 'ar' else 'VA_Rating'
+    y_disc = df_local[y_col].astype(int).values
+
+    return np.stack(disc_cols + [y_disc], axis=1).astype(int)
+
+
+def build_task_mi_matrix(tasks_data, splits, label_type='ar',
+                         feature_cols=None, use_train_trials_only=True):
+    """Compute pairwise MI between tasks/users."""
+    task_ids = sorted(list(tasks_data.keys()))
+    signatures = {}
+
+    for pid in task_ids:
+        task_df = tasks_data[pid]
+        if use_train_trials_only and pid in splits:
+            task_df = task_df[task_df['Trial'].isin(
+                splits[pid]['train'])].reset_index(drop=True)
+        signatures[pid] = _compute_task_mi_signature(
+            task_df, label_type=label_type, feature_cols=feature_cols)
+
+    n_sig_cols = signatures[task_ids[0]].shape[1]
+    mi_matrix = {pid: {} for pid in task_ids}
+
+    for i, pid_i in enumerate(task_ids):
+        sig_i = signatures[pid_i]
+        for j, pid_j in enumerate(task_ids):
+            if j < i:
+                mi_matrix[pid_i][pid_j] = mi_matrix[pid_j][pid_i]
+                continue
+            sig_j = signatures[pid_j]
+            m = min(len(sig_i), len(sig_j))
+            if m == 0:
+                mi_val = 0.0
+            else:
+                mi_per_col = []
+                for c in range(n_sig_cols):
+                    mi_per_col.append(
+                        mutual_info_score(sig_i[:m, c], sig_j[:m, c]))
+                mi_val = np.mean(mi_per_col)
+            mi_matrix[pid_i][pid_j] = float(mi_val)
+            mi_matrix[pid_j][pid_i] = float(mi_val)
+
+    return mi_matrix
+
+
+def sample_mi_guided_episode(task_ids, mi_matrix, rng, episode_size=5,
+                              n_similar=2, n_diverse=2):
+    """MI-guided episodic sampler: anchor + similar + diverse participants."""
+    task_ids = list(task_ids)
+    if len(task_ids) <= episode_size:
+        return list(task_ids)
+
+    anchor = int(rng.choice(task_ids))
+    others = [pid for pid in task_ids if pid != anchor]
+
+    ranked = sorted(others, key=lambda pid: mi_matrix[anchor][pid], reverse=True)
+    similar = ranked[:min(n_similar, len(ranked))]
+
+    remaining = [pid for pid in others if pid not in similar]
+    ranked_low = sorted(remaining, key=lambda pid: mi_matrix[anchor][pid])
+    diverse = ranked_low[:min(n_diverse, len(ranked_low))]
+
+    selected = [anchor] + similar + diverse
+    unused = [pid for pid in task_ids if pid not in selected]
+    needed = max(0, episode_size - len(selected))
+    if needed > 0 and len(unused) > 0:
+        extra = list(rng.choice(unused, size=min(needed, len(unused)),
+                                replace=False))
+        selected.extend(extra)
+
+    return selected[:episode_size]
+
+
+# ================================================================
+# META-TRAINING
+# ================================================================
+
+def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
+                   meta_lr, inner_lr, l2_shared, l2_task):
+    """Reptile-MI: MI-guided episodes, backbone-only outer update."""
+    base  = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
+    heads = {pid: TaskHead().to(device) for pid in train_ps}
+    rng   = np.random.default_rng(SEED)
+
+    # Build MI matrix from train participants
+    tasks_data = {uid: df[df['ID'] == uid].reset_index(drop=True)
+                  for uid in train_ps}
+    mi_matrix = build_task_mi_matrix(
+        tasks_data, splits, label_type=label_type,
+        feature_cols=cfg['feature_cols'], use_train_trials_only=True)
+
+    task_ids = list(train_ps)
+    print(f"\n[FINAL-{label_type.upper()}] Meta-training on "
+          f"{len(task_ids)} train participants")
 
     for step in range(META_STEPS):
-        episode_ps = rng.sample(train_ps, min(EPISODE_SIZE, len(train_ps)))
-        adapted_bases, adapted_heads = [], []
+        # MI-guided multi-user episode (only difference from MT)
+        selected_pids = sample_mi_guided_episode(
+            task_ids, mi_matrix, rng,
+            episode_size=min(EPISODE_SIZE, len(task_ids)),
+            n_similar=2, n_diverse=2)
 
-        for pid in episode_ps:
-            p_df = df[df['ID'] == pid].reset_index(drop=True)
+        if step % 20 == 0:
+            anchor = selected_pids[0]
+            mi_vals = [mi_matrix[anchor][p] for p in selected_pids[1:]]
+            print(f"    Episode MI: {np.round(mi_vals, 3)}")
+
+        adapted_bases = []
+        for pid in selected_pids:
+            p_df = tasks_data[pid]
             sup_loader, _ = build_support_query(
                 p_df, splits[pid]['train'], [],
                 ar_or_va=label_type,
                 window_size=cfg['window_size'], stride=cfg['stride'],
                 feature_cols=cfg['feature_cols'])
 
-            ab, ah = adapt_inner_loop(
-                base, head, sup_loader, label_type,
-                INNER_STEPS, INNER_LR, device,
-                l2_shared=L2_SHARED, l2_task=L2_TASK)
-            adapted_bases.append(ab)
-            adapted_heads.append(ah)
+            adapted_base, adapted_head = adapt_inner_loop(
+                base, heads[pid], sup_loader, label_type,
+                INNER_STEPS, inner_lr, device,
+                l2_shared=l2_shared, l2_task=l2_task)
+            adapted_bases.append(adapted_base)
 
-        # Outer update on BOTH backbone and head
-        reptile_outer_update(base, adapted_bases, META_LR)
-        reptile_outer_update(head, adapted_heads, META_LR)
+            # Keep updated head per-participant
+            heads[pid] = adapted_head
+
+        # Outer update on backbone only
+        reptile_outer_update(base, adapted_bases, meta_lr)
 
         if (step + 1) % 10 == 0 or step == 0:
             print(f"  [{label_type.upper()}] Reptile-MI step {step+1}/{META_STEPS}")
 
-    torch.save(base.state_dict(), os.path.join(output_dir, f'reptile_mi_base_{label_type}.pth'))
-    torch.save(head.state_dict(), os.path.join(output_dir, f'reptile_mi_head_{label_type}.pth'))
-    return base, head
+    torch.save(base.state_dict(),
+               os.path.join(output_dir, f'reptile_mi_base_{label_type}.pth'))
+    return base
 
+
+# ================================================================
+# MAIN
+# ================================================================
 
 if __name__ == '__main__':
     args = parse_args()
@@ -91,19 +225,24 @@ if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     set_all_seeds(SEED)
-    if device.type == 'cuda': torch.backends.cudnn.benchmark = True
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
     print(f"Device: {device}\nDataset: {args.dataset}\nOutput: {output_dir}")
 
     for lt in ['ar', 'va']:
         print(f"\n{'='*60}\nREPTILE-MI META-TRAINING {lt.upper()}\n{'='*60}")
         set_all_seeds(SEED)
-        base, head = _reptile_train(lt, df, splits, train_ps, cfg, device, output_dir)
+        base = _reptile_train(lt, df, splits, train_ps, cfg, device, output_dir,
+                              meta_lr=META_LR, inner_lr=INNER_LR,
+                              l2_shared=L2_SHARED, l2_task=L2_TASK)
 
         print(f"\n{'='*60}\nADAPT + EVAL {lt.upper()}\n{'='*60}")
         results = []
         for uid in sorted(test_ps):
-            if uid not in splits: continue
+            if uid not in splits:
+                continue
             t_df = df[df['ID'] == uid].reset_index(drop=True)
+            head = TaskHead().to(device)
             r = evaluate_test_user(
                 base, head, t_df, splits, uid, lt, device,
                 inner_steps=INNER_STEPS, inner_lr=INNER_LR,
@@ -112,10 +251,13 @@ if __name__ == '__main__':
                 feature_cols=cfg['feature_cols'])
             if r is not None:
                 results.append(r)
-                print(f"  P{uid}: {lt.upper()} Acc={r[f'{lt}_acc']:.4f} F1={r[f'{lt}_f1']:.4f}")
+                print(f"  P{uid}: {lt.upper()} Acc={r[f'{lt}_acc']:.4f} "
+                      f"F1={r[f'{lt}_f1']:.4f}")
 
-        if lt == 'ar': results_ar = results
-        else: results_va = results
+        if lt == 'ar':
+            results_ar = results
+        else:
+            results_va = results
 
     agg = aggregate_mtml_results(results_ar, results_va)
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:

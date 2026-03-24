@@ -1,7 +1,9 @@
 """
 Reptile Multi-Task (MT)
 Shared backbone + per-participant heads during meta-training.
+Samples EPISODE_SIZE participants per meta-step.
 Reptile outer-loop updates backbone only.
+Heads are kept per-participant and updated individually.
 At test time: fresh head per test participant, adapt both.
 
 Usage
@@ -10,25 +12,24 @@ Usage
     python reptile_mt.py --dataset dssn_eq
 """
 import argparse
-import os, sys, time, copy, random
+import os, sys, time
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
-from config import (SEED, MAX_NORM, META_STEPS, META_LR,
+from config import (SEED, META_STEPS, META_LR,
                     INNER_STEPS, INNER_LR, EPISODE_SIZE,
-                    L2_SHARED, L2_TASK, RESULTS_DIR)
+                    N_FOLDS, L2_SHARED, L2_TASK, RESULTS_DIR)
 import numpy as np
 import pickle
 import torch
-import torch.nn as nn
-import torch.optim as optim
+from sklearn.metrics import f1_score
 from data import build_support_query
 from dataset_configs.loader import load_dataset
 from models import BaseFeatureExtractor, TaskHead
-from utils import (set_all_seeds, aggregate_mtml_results,
+from utils import (set_all_seeds, make_kfolds, aggregate_mtml_results,
                    compute_per_participant_stds, print_determinism_summary)
-from training import evaluate_test_user, reptile_outer_update
+from training import adapt_inner_loop, evaluate_test_user, reptile_outer_update
 
 
 def parse_args():
@@ -38,45 +39,16 @@ def parse_args():
     return p.parse_args()
 
 
-def _inner_adapt_mt(base, head, sup_loader, label_type, device):
-    """Inner-loop adaptation: adapt both backbone copy and head copy."""
-    ab = copy.deepcopy(base).to(device)
-    ah = copy.deepcopy(head).to(device)
-    ab.train(); ah.train()
-
-    sp = list(ab.parameters())
-    tp = list(ah.parameters())
-    opt     = optim.Adam(sp + tp, lr=INNER_LR)
-    sched   = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', 0.1, 3)
-    loss_fn = nn.BCEWithLogitsLoss()
-
-    for step in range(INNER_STEPS):
-        ep_loss = 0.0; nb = 0
-        for Xb, yb in sup_loader:
-            Xb, yb = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
-            opt.zero_grad(set_to_none=True)
-            loss = loss_fn(ah(ab(Xb)), yb)
-            l2 = (L2_SHARED * sum(p.norm(2)**2 for p in sp if p.requires_grad) +
-                  L2_TASK * sum(p.norm(2)**2 for p in tp if p.requires_grad))
-            total = loss + l2
-            if not torch.isnan(total):
-                total.backward()
-                torch.nn.utils.clip_grad_norm_(sp + tp, MAX_NORM)
-                opt.step()
-            ep_loss += total.item(); nb += 1
-        if nb > 0: sched.step(ep_loss / nb)
-    return ab
-
-
-def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir):
-    """Reptile-MT meta-training: outer update on backbone only."""
-    base = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
-    # Per-participant heads (keyed by participant id)
+def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
+                   meta_lr, inner_lr, l2_shared, l2_task):
+    """Reptile-MT meta-training: multi-participant episodes, backbone-only outer update."""
+    base  = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
     heads = {pid: TaskHead().to(device) for pid in train_ps}
-    rng = random.Random(SEED)
+    rng   = np.random.default_rng(SEED)
 
     for step in range(META_STEPS):
-        episode_ps = rng.sample(train_ps, min(EPISODE_SIZE, len(train_ps)))
+        episode_ps = rng.choice(train_ps, size=min(EPISODE_SIZE, len(train_ps)),
+                                replace=False).tolist()
         adapted_bases = []
 
         for pid in episode_ps:
@@ -87,19 +59,130 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir):
                 window_size=cfg['window_size'], stride=cfg['stride'],
                 feature_cols=cfg['feature_cols'])
 
-            ab = _inner_adapt_mt(base, heads[pid], sup_loader, label_type, device)
-            adapted_bases.append(ab)
+            adapted_base, adapted_head = adapt_inner_loop(
+                base, heads[pid], sup_loader, label_type,
+                INNER_STEPS, inner_lr, device,
+                l2_shared=l2_shared, l2_task=l2_task)
+            adapted_bases.append(adapted_base)
+
+            # Keep updated head per-participant
+            heads[pid] = adapted_head
 
         # Outer update on backbone only
-        reptile_outer_update(base, adapted_bases, META_LR)
+        reptile_outer_update(base, adapted_bases, meta_lr)
 
         if (step + 1) % 10 == 0 or step == 0:
             print(f"  [{label_type.upper()}] Reptile-MT step {step+1}/{META_STEPS}")
 
-    torch.save(base.state_dict(), os.path.join(output_dir, f'reptile_mt_base_{label_type}.pth'))
+    torch.save(base.state_dict(),
+               os.path.join(output_dir, f'reptile_mt_base_{label_type}.pth'))
     return base
 
 
+# =============================
+# HYPERPARAMETER TUNING
+# =============================
+def hyperparameter_tuning(label_type, df, splits, train_ps, cfg, device, output_dir):
+    """K-fold CV on train participants to validate Reptile-MT hyperparameters."""
+    print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type.upper()}] Reptile-MT"
+          f"  ({cfg['results_prefix']})\n{'='*60}")
+    print(f"  META_LR={META_LR}, INNER_LR={INNER_LR}, "
+          f"INNER_STEPS={INNER_STEPS}, EPISODE_SIZE={EPISODE_SIZE}")
+    print(f"  L2: Shared={L2_SHARED}, Task={L2_TASK}")
+
+    results = []
+    train_folds = make_kfolds(train_ps, seed=SEED)
+
+    for meta_lr in [META_LR]:
+        for inner_lr in [INNER_LR]:
+            for l2_s in [L2_SHARED]:
+                for l2_t in [L2_TASK]:
+                    fold_f1s = []
+                    for fold_i in range(N_FOLDS):
+                        val_ps = train_folds[fold_i]
+                        tr_ps  = [p for j, f in enumerate(train_folds)
+                                  if j != fold_i for p in f]
+
+                        # Meta-train on fold's train participants
+                        set_all_seeds(SEED)
+                        base  = BaseFeatureExtractor(
+                            input_dim=cfg['input_dim']).to(device)
+                        heads = {pid: TaskHead().to(device) for pid in tr_ps}
+                        rng   = np.random.default_rng(SEED)
+
+                        for step in range(META_STEPS):
+                            episode_ps = rng.choice(
+                                tr_ps,
+                                size=min(EPISODE_SIZE, len(tr_ps)),
+                                replace=False).tolist()
+                            adapted_bases = []
+
+                            for pid in episode_ps:
+                                p_df = df[df['ID'] == pid].reset_index(
+                                    drop=True)
+                                sup_loader, _ = build_support_query(
+                                    p_df, splits[pid]['train'], [],
+                                    ar_or_va=label_type,
+                                    window_size=cfg['window_size'],
+                                    stride=cfg['stride'],
+                                    feature_cols=cfg['feature_cols'])
+                                adapted_base, adapted_head = adapt_inner_loop(
+                                    base, heads[pid], sup_loader, label_type,
+                                    INNER_STEPS, inner_lr, device,
+                                    l2_shared=l2_s, l2_task=l2_t)
+                                adapted_bases.append(adapted_base)
+                                heads[pid] = adapted_head
+
+                            reptile_outer_update(base, adapted_bases, meta_lr)
+
+                        # Adapt + evaluate on fold's val participants
+                        val_f1s = []
+                        for uid in sorted(val_ps):
+                            if uid not in splits:
+                                continue
+                            t_df = df[df['ID'] == uid].reset_index(drop=True)
+                            head = TaskHead().to(device)
+                            r = evaluate_test_user(
+                                base, head, t_df, splits, uid, label_type,
+                                device,
+                                inner_steps=INNER_STEPS, inner_lr=inner_lr,
+                                l2_shared=l2_s, l2_task=l2_t,
+                                window_size=cfg['window_size'],
+                                stride=cfg['stride'],
+                                feature_cols=cfg['feature_cols'])
+                            if r is not None:
+                                y_true = r[f'y_true_{label_type}']
+                                y_pred = r[f'y_pred_{label_type}']
+                                val_f1s.append(f1_score(
+                                    y_true, y_pred,
+                                    average='macro', zero_division=0))
+
+                        if val_f1s:
+                            fold_f1s.append(np.mean(val_f1s))
+                            print(f"  Fold {fold_i + 1}/{N_FOLDS}: "
+                                  f"Val F1 = {fold_f1s[-1]:.4f}")
+
+                    if not fold_f1s:
+                        continue
+                    avg = np.mean(fold_f1s)
+                    results.append({
+                        'meta_lr': meta_lr, 'inner_lr': inner_lr,
+                        'l2_shared': l2_s, 'l2_task': l2_t,
+                        'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
+                    print(f"  Average F1: {avg:.4f}")
+
+    if not results:
+        return META_LR, INNER_LR, L2_SHARED, L2_TASK
+    best = max(results, key=lambda x: x['avg_f1'])
+    with open(os.path.join(output_dir,
+              f'{label_type}_tuning_results_reptile_mt.pkl'), 'wb') as f:
+        pickle.dump({'all': results, 'best': best}, f)
+    return best['meta_lr'], best['inner_lr'], best['l2_shared'], best['l2_task']
+
+
+# =============================
+# MAIN
+# =============================
 if __name__ == '__main__':
     args = parse_args()
     experiment_t0 = time.time()
@@ -115,32 +198,52 @@ if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     set_all_seeds(SEED)
-    if device.type == 'cuda': torch.backends.cudnn.benchmark = True
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
     print(f"Device: {device}\nDataset: {args.dataset}\nOutput: {output_dir}")
 
+    # Hyperparameter tuning on train participants only
+    best_meta_lr_ar, best_inner_lr_ar, best_l2s_ar, best_l2t_ar = \
+        hyperparameter_tuning('ar', df, splits, train_ps, cfg, device, output_dir)
+    best_meta_lr_va, best_inner_lr_va, best_l2s_va, best_l2t_va = \
+        hyperparameter_tuning('va', df, splits, train_ps, cfg, device, output_dir)
+
     for lt in ['ar', 'va']:
+        if lt == 'ar':
+            meta_lr, inner_lr = best_meta_lr_ar, best_inner_lr_ar
+            l2_s, l2_t = best_l2s_ar, best_l2t_ar
+        else:
+            meta_lr, inner_lr = best_meta_lr_va, best_inner_lr_va
+            l2_s, l2_t = best_l2s_va, best_l2t_va
+
         print(f"\n{'='*60}\nREPTILE-MT META-TRAINING {lt.upper()}\n{'='*60}")
         set_all_seeds(SEED)
-        base = _reptile_train(lt, df, splits, train_ps, cfg, device, output_dir)
+        base = _reptile_train(lt, df, splits, train_ps, cfg, device, output_dir,
+                              meta_lr=meta_lr, inner_lr=inner_lr,
+                              l2_shared=l2_s, l2_task=l2_t)
 
         print(f"\n{'='*60}\nADAPT + EVAL {lt.upper()}\n{'='*60}")
         results = []
         for uid in sorted(test_ps):
-            if uid not in splits: continue
+            if uid not in splits:
+                continue
             t_df = df[df['ID'] == uid].reset_index(drop=True)
-            head = TaskHead().to(device)  # fresh head per test participant
+            head = TaskHead().to(device)
             r = evaluate_test_user(
                 base, head, t_df, splits, uid, lt, device,
-                inner_steps=INNER_STEPS, inner_lr=INNER_LR,
-                l2_shared=L2_SHARED, l2_task=L2_TASK,
+                inner_steps=INNER_STEPS, inner_lr=inner_lr,
+                l2_shared=l2_s, l2_task=l2_t,
                 window_size=cfg['window_size'], stride=cfg['stride'],
                 feature_cols=cfg['feature_cols'])
             if r is not None:
                 results.append(r)
-                print(f"  P{uid}: {lt.upper()} Acc={r[f'{lt}_acc']:.4f} F1={r[f'{lt}_f1']:.4f}")
+                print(f"  P{uid}: {lt.upper()} Acc={r[f'{lt}_acc']:.4f} "
+                      f"F1={r[f'{lt}_f1']:.4f}")
 
-        if lt == 'ar': results_ar = results
-        else: results_va = results
+        if lt == 'ar':
+            results_ar = results
+        else:
+            results_va = results
 
     agg = aggregate_mtml_results(results_ar, results_va)
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
@@ -151,6 +254,11 @@ if __name__ == '__main__':
     va_stds = compute_per_participant_stds(results_va, 'va')
     final = {
         'train_participants': train_ps, 'test_participants': test_ps,
+        'best_hyperparameters': {
+            'AR': {'meta_lr': best_meta_lr_ar, 'inner_lr': best_inner_lr_ar,
+                   'l2_shared': best_l2s_ar, 'l2_task': best_l2t_ar},
+            'VA': {'meta_lr': best_meta_lr_va, 'inner_lr': best_inner_lr_va,
+                   'l2_shared': best_l2s_va, 'l2_task': best_l2t_va}},
         **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
         **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
         **ar_stds, **va_stds,

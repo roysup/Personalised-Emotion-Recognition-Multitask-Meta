@@ -1,6 +1,8 @@
 """
-Pure Meta-Learning (MAML-style)
-Episode-based meta-training on train participants, then adapt+evaluate on test.
+Pure Meta-Learning (Reptile-style)
+Single monolithic model (no backbone/head split). Samples 1 participant per
+meta-step. L2 applied uniformly to all parameters. At test time: deep-copy
+model, adapt per test participant via inner-loop, then evaluate.
 
 Usage
 -----
@@ -8,25 +10,28 @@ Usage
     python pure_meta.py --dataset dssn_eq
 """
 import argparse
-import os, sys, time, copy, random
+import os, sys, time, copy
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
 from config import (SEED, MAX_NORM, META_STEPS, META_LR,
-                    INNER_STEPS, INNER_LR, EPISODE_SIZE,
-                    L2_SHARED, L2_TASK, RESULTS_DIR)
+                    INNER_STEPS, INNER_LR,
+                    N_FOLDS, L2_TASK, RESULTS_DIR)
 import numpy as np
 import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from sklearn.metrics import confusion_matrix, f1_score
 from data import build_support_query
 from dataset_configs.loader import load_dataset
-from models import BaseFeatureExtractor, TaskHead
-from utils import (set_all_seeds, aggregate_mtml_results,
-                   compute_per_participant_stds, print_determinism_summary)
-from training import adapt_inner_loop, evaluate_test_user
+from models import SingleTaskModel
+from utils import (set_all_seeds, compute_metrics_from_cm,
+                   aggregate_mtml_results, make_kfolds,
+                   compute_per_participant_stds,
+                   print_determinism_summary)
 
 
 def parse_args():
@@ -36,54 +41,217 @@ def parse_args():
     return p.parse_args()
 
 
-def _meta_train(label_type, df, splits, train_ps, cfg, device, output_dir):
-    """MAML-style meta-training across episodes."""
-    base = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
-    head = TaskHead().to(device)
+# =============================
+# INNER-LOOP ADAPTATION (single model, uniform L2)
+# =============================
+def _adapt_single_model(model, sup_loader, inner_steps, inner_lr,
+                        l2_lambda, device):
+    """Adapt a deep copy of the full model on support data."""
+    adapted = copy.deepcopy(model).to(device)
+    adapted.train()
 
-    meta_opt = optim.Adam(list(base.parameters()) + list(head.parameters()), lr=META_LR)
+    opt     = optim.Adam(adapted.parameters(), lr=inner_lr)
+    sched   = ReduceLROnPlateau(opt, 'min', 0.1, 3)
+    loss_fn = nn.BCEWithLogitsLoss()
 
-    rng = random.Random(SEED)
+    for step in range(inner_steps):
+        ep_loss = 0.0
+        nb = 0
+        for Xb, yb in sup_loader:
+            Xb, yb = Xb.to(device), yb.to(device)
+            opt.zero_grad(set_to_none=True)
+            loss = loss_fn(adapted(Xb), yb)
+            # Uniform L2 on ALL parameters
+            l2_reg = l2_lambda * sum(torch.sum(p ** 2) for p in adapted.parameters())
+            total = loss + l2_reg
+            if not torch.isnan(total):
+                total.backward()
+                torch.nn.utils.clip_grad_norm_(adapted.parameters(), MAX_NORM)
+                opt.step()
+            ep_loss += total.item()
+            nb += 1
+        if nb > 0:
+            sched.step(ep_loss / nb)
+
+    return adapted
+
+
+# =============================
+# HYPERPARAMETER TUNING
+# =============================
+def hyperparameter_tuning(label_type, df, splits, train_ps, cfg, device, output_dir):
+    """K-fold CV on train participants to validate meta-learning hyperparameters."""
+    print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type.upper()}] Pure Meta"
+          f"  ({cfg['results_prefix']})\n{'='*60}")
+    print(f"  META_LR={META_LR}, INNER_LR={INNER_LR}, "
+          f"INNER_STEPS={INNER_STEPS}, L2={L2_TASK}")
+
+    results = []
+    train_folds = make_kfolds(train_ps, seed=SEED)
+
+    for meta_lr in [META_LR]:
+        for inner_lr in [INNER_LR]:
+            for l2 in [L2_TASK]:
+                fold_f1s = []
+                for fold_i in range(N_FOLDS):
+                    val_ps = train_folds[fold_i]
+                    tr_ps  = [p for j, f in enumerate(train_folds)
+                              if j != fold_i for p in f]
+
+                    # Meta-train on fold's train participants
+                    set_all_seeds(SEED)
+                    model = SingleTaskModel(input_dim=cfg['input_dim']).to(device)
+                    rng = np.random.default_rng(SEED)
+
+                    for step in range(META_STEPS):
+                        uid = int(rng.choice(tr_ps))
+                        p_df = df[df['ID'] == uid].reset_index(drop=True)
+                        sup_loader, _ = build_support_query(
+                            p_df, splits[uid]['train'], [],
+                            ar_or_va=label_type,
+                            window_size=cfg['window_size'],
+                            stride=cfg['stride'],
+                            feature_cols=cfg['feature_cols'])
+                        adapted = _adapt_single_model(
+                            model, sup_loader, INNER_STEPS, inner_lr,
+                            l2, device)
+                        with torch.no_grad():
+                            for p, p_new in zip(model.parameters(),
+                                                adapted.parameters()):
+                                p.data.add_(meta_lr * (p_new.data - p.data))
+
+                    # Adapt + evaluate on fold's val participants
+                    val_f1s = []
+                    for uid in sorted(val_ps):
+                        if uid not in splits:
+                            continue
+                        t_df = df[df['ID'] == uid].reset_index(drop=True)
+                        sup_loader, q_loader = build_support_query(
+                            t_df, splits[uid]['train'], splits[uid]['test'],
+                            ar_or_va=label_type,
+                            window_size=cfg['window_size'],
+                            stride=cfg['stride'],
+                            feature_cols=cfg['feature_cols'])
+                        if len(q_loader.dataset) == 0:
+                            continue
+                        adapted = _adapt_single_model(
+                            model, sup_loader, INNER_STEPS, inner_lr,
+                            l2, device)
+                        adapted.eval()
+                        probs, labels = [], []
+                        with torch.no_grad():
+                            for Xb, yb in q_loader:
+                                probs.extend(torch.sigmoid(
+                                    adapted(Xb.to(device))
+                                ).cpu().numpy().flatten())
+                                labels.extend(yb.numpy().flatten())
+                        y_true = np.array(labels).astype(int)
+                        y_pred = (np.array(probs) > 0.5).astype(int)
+                        val_f1s.append(f1_score(y_true, y_pred,
+                                                average='macro',
+                                                zero_division=0))
+
+                    if val_f1s:
+                        fold_f1s.append(np.mean(val_f1s))
+                        print(f"  Fold {fold_i + 1}/{N_FOLDS}: "
+                              f"Val F1 = {fold_f1s[-1]:.4f}")
+
+                if not fold_f1s:
+                    continue
+                avg = np.mean(fold_f1s)
+                results.append({
+                    'meta_lr': meta_lr, 'inner_lr': inner_lr, 'l2': l2,
+                    'avg_f1': avg, 'std_f1': np.std(fold_f1s)})
+                print(f"  Average F1: {avg:.4f}")
+
+    if not results:
+        return META_LR, INNER_LR, L2_TASK
+    best = max(results, key=lambda x: x['avg_f1'])
+    with open(os.path.join(output_dir,
+              f'{label_type}_tuning_results_pure_meta.pkl'), 'wb') as f:
+        pickle.dump({'all': results, 'best': best}, f)
+    return best['meta_lr'], best['inner_lr'], best['l2']
+
+
+# =============================
+# META-TRAINING (1 participant per step, Reptile outer update)
+# =============================
+def _meta_train(label_type, df, splits, train_ps, cfg, device, output_dir,
+                meta_lr, inner_lr, l2):
+    """Reptile-style meta-training with 1 participant per step."""
+    model = SingleTaskModel(input_dim=cfg['input_dim']).to(device)
+    rng = np.random.default_rng(SEED)
 
     for step in range(META_STEPS):
-        episode_ps = rng.sample(train_ps, min(EPISODE_SIZE, len(train_ps)))
-        adapted_bases, adapted_heads = [], []
+        uid = int(rng.choice(train_ps))
+        p_df = df[df['ID'] == uid].reset_index(drop=True)
 
-        for pid in episode_ps:
-            p_df = df[df['ID'] == pid].reset_index(drop=True)
-            sup_loader, _ = build_support_query(
-                p_df, splits[pid]['train'], [],
-                ar_or_va=label_type,
-                window_size=cfg['window_size'], stride=cfg['stride'],
-                feature_cols=cfg['feature_cols'])
+        sup_loader, _ = build_support_query(
+            p_df, splits[uid]['train'], [],
+            ar_or_va=label_type,
+            window_size=cfg['window_size'], stride=cfg['stride'],
+            feature_cols=cfg['feature_cols'])
 
-            ab, ah = adapt_inner_loop(
-                base, head, sup_loader, label_type,
-                INNER_STEPS, INNER_LR, device,
-                l2_shared=L2_SHARED, l2_task=L2_TASK)
-            adapted_bases.append(ab)
-            adapted_heads.append(ah)
+        adapted = _adapt_single_model(
+            model, sup_loader, INNER_STEPS, inner_lr, l2, device)
 
-        # Meta-update: average adapted weights back toward base
-        meta_opt.zero_grad(set_to_none=True)
+        # Reptile outer update
         with torch.no_grad():
-            for name, p in base.named_parameters():
-                mean_adapted = torch.stack(
-                    [dict(m.named_parameters())[name].data for m in adapted_bases]).mean(0)
-                p.data.add_(META_LR * (mean_adapted - p.data))
-            for name, p in head.named_parameters():
-                mean_adapted = torch.stack(
-                    [dict(m.named_parameters())[name].data for m in adapted_heads]).mean(0)
-                p.data.add_(META_LR * (mean_adapted - p.data))
+            for p, p_new in zip(model.parameters(), adapted.parameters()):
+                p.data.add_(meta_lr * (p_new.data - p.data))
 
         if (step + 1) % 10 == 0 or step == 0:
             print(f"  [{label_type.upper()}] Meta-step {step+1}/{META_STEPS}")
 
-    torch.save(base.state_dict(), os.path.join(output_dir, f'meta_base_{label_type}.pth'))
-    torch.save(head.state_dict(), os.path.join(output_dir, f'meta_head_{label_type}.pth'))
-    return base, head
+    torch.save(model.state_dict(),
+               os.path.join(output_dir, f'meta_model_{label_type}_final.pth'))
+    return model
 
 
+# =============================
+# TEST USER EVALUATION
+# =============================
+def _evaluate_test_user(model, test_df, splits, uid, ar_or_va, cfg, device,
+                        inner_lr, l2):
+    """Adapt and evaluate on one test participant."""
+    sup_loader, q_loader = build_support_query(
+        test_df, splits[uid]['train'], splits[uid]['test'],
+        ar_or_va=ar_or_va,
+        window_size=cfg['window_size'], stride=cfg['stride'],
+        feature_cols=cfg['feature_cols'])
+
+    if len(q_loader.dataset) == 0:
+        return None
+
+    adapted = _adapt_single_model(
+        model, sup_loader, INNER_STEPS, inner_lr, l2, device)
+
+    adapted.eval()
+    probs, labels = [], []
+    with torch.no_grad():
+        for Xb, yb in q_loader:
+            probs.extend(torch.sigmoid(adapted(Xb.to(device))).cpu().numpy().flatten())
+            labels.extend(yb.numpy().flatten())
+
+    y_true = np.array(labels).astype(int)
+    y_prob = np.array(probs)
+    y_pred = (y_prob > 0.5).astype(int)
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    acc, prec, rec, f1 = compute_metrics_from_cm(cm)
+
+    p = ar_or_va
+    return {
+        'participant_id': uid, 'cm': cm,
+        f'{p}_acc': acc, f'{p}_precision': prec,
+        f'{p}_recall': rec, f'{p}_f1': f1,
+        f'y_true_{p}': y_true, f'y_pred_{p}': y_pred,
+        f'y_pred_probs_{p}': y_prob,
+    }
+
+
+# =============================
+# MAIN
+# =============================
 if __name__ == '__main__':
     args = parse_args()
     experiment_t0 = time.time()
@@ -99,29 +267,40 @@ if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     set_all_seeds(SEED)
-    if device.type == 'cuda': torch.backends.cudnn.benchmark = True
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
     print(f"Device: {device}\nDataset: {args.dataset}\nOutput: {output_dir}")
     print(f"Train: {train_ps}\nTest:  {test_ps}")
 
+    # Hyperparameter tuning on train participants only
+    best_meta_lr_ar, best_inner_lr_ar, best_l2_ar = hyperparameter_tuning(
+        'ar', df, splits, train_ps, cfg, device, output_dir)
+    best_meta_lr_va, best_inner_lr_va, best_l2_va = hyperparameter_tuning(
+        'va', df, splits, train_ps, cfg, device, output_dir)
+
     for lt in ['ar', 'va']:
+        if lt == 'ar':
+            meta_lr, inner_lr, l2 = best_meta_lr_ar, best_inner_lr_ar, best_l2_ar
+        else:
+            meta_lr, inner_lr, l2 = best_meta_lr_va, best_inner_lr_va, best_l2_va
+
         print(f"\n{'='*60}\nMETA-TRAINING {lt.upper()}\n{'='*60}")
         set_all_seeds(SEED)
-        base, head = _meta_train(lt, df, splits, train_ps, cfg, device, output_dir)
+        model = _meta_train(lt, df, splits, train_ps, cfg, device, output_dir,
+                            meta_lr=meta_lr, inner_lr=inner_lr, l2=l2)
 
         print(f"\n{'='*60}\nADAPT + EVAL {lt.upper()} — TEST PARTICIPANTS\n{'='*60}")
         results = []
         for uid in sorted(test_ps):
-            if uid not in splits: continue
+            if uid not in splits:
+                continue
             t_df = df[df['ID'] == uid].reset_index(drop=True)
-            r = evaluate_test_user(
-                base, head, t_df, splits, uid, lt, device,
-                inner_steps=INNER_STEPS, inner_lr=INNER_LR,
-                l2_shared=L2_SHARED, l2_task=L2_TASK,
-                window_size=cfg['window_size'], stride=cfg['stride'],
-                feature_cols=cfg['feature_cols'])
+            r = _evaluate_test_user(model, t_df, splits, uid, lt, cfg, device,
+                                    inner_lr=inner_lr, l2=l2)
             if r is not None:
                 results.append(r)
-                print(f"  P{uid}: {lt.upper()} Acc={r[f'{lt}_acc']:.4f} F1={r[f'{lt}_f1']:.4f}")
+                print(f"  P{uid}: {lt.upper()} Acc={r[f'{lt}_acc']:.4f} "
+                      f"F1={r[f'{lt}_f1']:.4f}")
 
         if lt == 'ar':
             results_ar = results
@@ -129,16 +308,18 @@ if __name__ == '__main__':
             results_va = results
 
     agg = aggregate_mtml_results(results_ar, results_va)
-    roc_data = {'AR': {'true': agg['all_true_ar'], 'probs': agg['all_probs_ar']},
-                'VA': {'true': agg['all_true_va'], 'probs': agg['all_probs_va']}}
     with open(os.path.join(output_dir, 'global_roc_data.pkl'), 'wb') as f:
-        pickle.dump(roc_data, f)
+        pickle.dump({'AR': {'true': agg['all_true_ar'], 'probs': agg['all_probs_ar']},
+                     'VA': {'true': agg['all_true_va'], 'probs': agg['all_probs_va']}}, f)
 
     ar_stds = compute_per_participant_stds(results_ar, 'ar')
     va_stds = compute_per_participant_stds(results_va, 'va')
 
     final = {
         'train_participants': train_ps, 'test_participants': test_ps,
+        'best_hyperparameters': {
+            'AR': {'meta_lr': best_meta_lr_ar, 'inner_lr': best_inner_lr_ar, 'l2': best_l2_ar},
+            'VA': {'meta_lr': best_meta_lr_va, 'inner_lr': best_inner_lr_va, 'l2': best_l2_va}},
         **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
         **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
         **ar_stds, **va_stds,
