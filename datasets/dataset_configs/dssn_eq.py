@@ -43,6 +43,11 @@ def load_dssn_eq_df(preserve_trial_order: bool = False,
     """
     cfg = DSSN_EQ_CONFIG
     df = pd.read_csv(cfg['csv_path'])
+    
+    # Replace unscaled features with scaled versions (matches VREED pattern)
+    df = df.drop(columns=['ECG 1', 'ECG 2', 'GSR'], errors='ignore')
+    df = df.rename(columns={'ECG 1_scaled': 'ECG 1', 'ECG 2_scaled': 'ECG 2',
+                            'GSR_scaled': 'GSR'})
 
     # Apply column renames
     if cfg['column_renames']:
