@@ -230,25 +230,22 @@ if __name__ == '__main__':
             splits[pid]['train'])].reset_index(drop=True)
     num_base = len(base_train_data)
 
-    # Per-test-participant: train fresh model on train_ps + this test participant, then evaluate
-    print(f"\n{'='*60}\nTRAINING + EVALUATION (per test participant)\n{'='*60}")
-
-    results_ar, results_va = [], []
+    # ===== AR PASS =====
+    print(f"\n{'='*60}\nTRAINING + EVALUATION AR (per test participant)\n{'='*60}")
+    set_all_seeds(SEED)
+    results_ar = []
 
     for uid in sorted(test_ps):
         if uid not in splits:
             continue
-        print(f"\n--- Test Participant {uid} ---")
+        print(f"\n--- Test Participant {uid} [AR] ---")
 
-        # Build data dict: all train participants + this one test participant
-        data_dict = dict(base_train_data)  # shallow copy, indices 0..num_base-1
-        test_task_idx = num_base  # test participant gets the last task index
+        data_dict = dict(base_train_data)
+        test_task_idx = num_base
         p_df = df[df['ID'] == uid].reset_index(drop=True)
         data_dict[test_task_idx] = p_df[p_df['Trial'].isin(
             splits[uid]['train'])].reset_index(drop=True)
 
-        # Train + evaluate AR
-        set_all_seeds(SEED)
         model_ar = _train_mtl('ar', best_lr_ar, data_dict, cfg, device,
                               output_dir, ckpt_tag=f'p{uid}')
         model_ar.eval()
@@ -272,14 +269,39 @@ if __name__ == '__main__':
                     'y_true_ar': labels_ar, 'y_pred_ar': preds_ar,
                     'y_pred_probs_ar': probs_ar,
                 })
+                print(f"  AR Acc={acc_ar:.4f} F1={f1_ar:.4f}")
 
-        # Train + evaluate VA
-        set_all_seeds(SEED)
+        del model_ar
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    # ===== VA PASS =====
+    print(f"\n{'='*60}\nTRAINING + EVALUATION VA (per test participant)\n{'='*60}")
+    set_all_seeds(SEED)
+    results_va = []
+
+    for uid in sorted(test_ps):
+        if uid not in splits:
+            continue
+        print(f"\n--- Test Participant {uid} [VA] ---")
+
+        data_dict = dict(base_train_data)
+        test_task_idx = num_base
+        p_df = df[df['ID'] == uid].reset_index(drop=True)
+        data_dict[test_task_idx] = p_df[p_df['Trial'].isin(
+            splits[uid]['train'])].reset_index(drop=True)
+
         model_va = _train_mtl('va', best_lr_va, data_dict, cfg, device,
                               output_dir, ckpt_tag=f'p{uid}')
         model_va.eval()
         with torch.no_grad():
+            test_df = p_df[p_df['Trial'].isin(splits[uid]['test'])].reset_index(drop=True)
+            X, y_ar, y_va, _, _ = create_sliding_windows(
+                test_df, cfg['window_size'], cfg['stride'],
+                task_id=test_task_idx, feature_cols=cfg['feature_cols'])
             if len(X) > 0:
+                X_t  = torch.tensor(X, dtype=torch.float32).to(device)
+                tids = torch.full((len(X),), test_task_idx, dtype=torch.long).to(device)
                 probs_va = torch.sigmoid(model_va(X_t, tids)).cpu().numpy().flatten()
                 preds_va = (probs_va > 0.5).astype(int)
                 labels_va = y_va.astype(int)
@@ -292,12 +314,9 @@ if __name__ == '__main__':
                     'y_true_va': labels_va, 'y_pred_va': preds_va,
                     'y_pred_probs_va': probs_va,
                 })
+                print(f"  VA Acc={acc_va:.4f} F1={f1_va:.4f}")
 
-        if len(X) > 0:
-            print(f"  AR Acc={acc_ar:.4f} F1={f1_ar:.4f} | "
-                  f"VA Acc={acc_va:.4f} F1={f1_va:.4f}")
-
-        del model_ar, model_va
+        del model_va
         torch.cuda.empty_cache()
         gc.collect()
 
