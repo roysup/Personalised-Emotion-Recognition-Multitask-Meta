@@ -223,7 +223,7 @@ _DATASET_REGISTRY = {
         'splits':         DSSN_EQ_SPLITS,
         'test_participants': DSSN_EQ_TEST_PARTICIPANTS,
         'results_prefix': 'DSSN_EQ',
-        'column_renames': {'Trial': 'video'}, #'ID_Trial': 'ID_video'},
+        'column_renames': {'video': 'Trial'}, #'ID_Trial': 'ID_video'},
         'id_trial_col':   'ID_video',
         'trial_col':      'Trial',
         'uw_logvar_lr_ar': 4e-3,
