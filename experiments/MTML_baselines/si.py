@@ -22,8 +22,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import confusion_matrix
-import matplotlib.pyplot as plt
-import seaborn as sns
 from utils import (set_all_seeds, compute_metrics_from_cm,
                    aggregate_mtml_results, make_kfolds,
                    compute_per_participant_stds, print_determinism_summary)
@@ -76,7 +74,7 @@ def hyperparameter_tuning(label_type, df, cfg, device, output_dir):
                 val_ps = train_folds[fold_i]
                 tr_ps  = [p for j, f in enumerate(train_folds) if j != fold_i for p in f]
                 tr_pte = [f"{p}_{v}" for p in tr_ps if p in splits for v in splits[p]['train']]
-                va_pte = [f"{p}_{v}" for p in val_ps if p in splits for v in splits[p]['train']]
+                va_pte = [f"{p}_{v}" for p in val_ps if p in splits for v in splits[p]['test']]
                 tr_df = df[df['trial_global'].isin(tr_pte)].reset_index(drop=True)
                 va_df = df[df['trial_global'].isin(va_pte)].reset_index(drop=True)
                 Xtr, _ar, _va, _, _ = create_sliding_windows(
