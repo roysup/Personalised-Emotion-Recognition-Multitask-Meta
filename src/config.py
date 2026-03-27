@@ -238,7 +238,7 @@ _DATASET_REGISTRY = {
         'stride':         320,
         'pstl_batch':     32,
         'stl_batch':      8,
-        'mtl_batch':      30,
+        'mtl_batch':      28,
         'splits':         DSSN_EM_SPLITS,
         'test_participants': DSSN_EM_TEST_PARTICIPANTS,
         'results_prefix': 'DSSN_EM',
