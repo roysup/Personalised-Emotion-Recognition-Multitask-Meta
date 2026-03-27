@@ -48,7 +48,7 @@ def _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids):
     1. Compute per-task losses on shared params only.
     2. Project gradients via PCGrad.
     3. Zero all grads, run standard .backward() for the task heads.
-    4. Overwrite shared param grads with projected values.
+    4. Overwrite shared param grads with projected values + L2 contribution.
     5. Return total loss.
     """
     shared_params = model.shared_parameters()
@@ -72,12 +72,15 @@ def _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids):
     total      = total_loss + model.compute_l2(L2_SHARED, L2_TASK)
     total.backward()
 
+    # Overwrite shared param grads with projected values,
+    # then add back L2 contribution (lost during overwrite)
     offset = 0
     for p in shared_params:
         n = p.numel()
         if p.grad is None:
             p.grad = torch.zeros_like(p)
         p.grad.copy_(projected[offset: offset + n].view_as(p))
+        p.grad.add_(2 * L2_SHARED * p.data)
         offset += n
 
     return total
