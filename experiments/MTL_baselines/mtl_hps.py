@@ -41,7 +41,7 @@ def parse_args():
 # =============================
 # TRAINING
 # =============================
-def _train_mtl(label_type, lr_shared, lr_task, train_data_dict,
+def _train_mtl(label_type, lr_shared, lr_task, l2_task, train_data_dict,
                cfg, device, output_dir):
     loader, _, _ = make_mtl_loader(
         train_data_dict, cfg['window_size'], cfg['stride'],
@@ -65,7 +65,7 @@ def _train_mtl(label_type, lr_shared, lr_task, train_data_dict,
             X_b, y_b, task_ids, _ = [b.to(device, non_blocking=True) for b in batch]
             opt.zero_grad(set_to_none=True)
             loss  = loss_fn(model(X_b, task_ids), y_b)
-            total = loss + model.compute_l2(L2_SHARED, L2_TASK)
+            total = loss + model.compute_l2(L2_SHARED, l2_task)
             if torch.isnan(total):
                 raise ValueError(f"NaN at epoch {epoch+1} [{label_type.upper()}]")
             total.backward()
@@ -215,13 +215,13 @@ if __name__ == '__main__':
 
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
     set_all_seeds(SEED)
-    model_ar = _train_mtl('ar', best_sh_ar, best_tk_ar, train_data,
-                           cfg, device, OUTPUT_DIR)
+    model_ar = _train_mtl('ar', best_sh_ar, best_tk_ar, best_l2_ar,
+                           train_data, cfg, device, OUTPUT_DIR)
 
     print("\n" + "="*60 + "\nTRAINING VA\n" + "="*60)
     set_all_seeds(SEED)
-    model_va = _train_mtl('va', best_sh_va, best_tk_va, train_data,
-                           cfg, device, OUTPUT_DIR)
+    model_va = _train_mtl('va', best_sh_va, best_tk_va, best_l2_va,
+                           train_data, cfg, device, OUTPUT_DIR)
 
     print("\n" + "="*60 + "\nEVALUATION\n" + "="*60)
     results = evaluate_mtl_all(model_ar, model_va, test_data,
