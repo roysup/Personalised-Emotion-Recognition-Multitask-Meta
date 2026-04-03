@@ -55,6 +55,7 @@ META_LR      = 0.01
 INNER_STEPS  = 10
 INNER_LR     = 1e-3
 EPISODE_SIZE = 5
+K_PER_CLASS  = None   # balanced k-shot: None = all windows; int = k per class
 
 # =============================
 # SCRIPT-SPECIFIC LR DEFAULTS
