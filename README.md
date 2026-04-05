@@ -360,8 +360,6 @@ python experiments/MTML_baselines/reptile_mt.py --dataset dssn_eq
 # Run all 13 experiments sequentially
 python experiments/run_all_experiments.py --dataset vreed
 
-# Collect results into a single CSV
-python experiments/collect_results.py
 ```
 
 All hyperparameters and train/test splits live in `src/config.py`.
