@@ -473,8 +473,10 @@ def _adapt_episode_step(episode_base, head, sup_loader, ar_or_va,
             Xb, yb = Xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(adapted_head(episode_base(Xb)), yb)
-            loss = loss + (l2_shared * sum(p.norm(2)**2 for p in sp if p.requires_grad) +
-                           l2_task   * sum(p.norm(2)**2 for p in tp if p.requires_grad))
+            #loss = loss + (l2_shared * sum(p.norm(2)**2 for p in sp if p.requires_grad) +
+                           #l2_task   * sum(p.norm(2)**2 for p in tp if p.requires_grad))
+            loss = loss + (l2_shared * sum(p.norm(2)**2 for p in sp if p.requires_grad and p.ndim >= 2) + l2_task* sum(p.norm(2)**2 for p in tp if p.requires_grad and p.ndim >= 2))
+            
             if not torch.isnan(loss):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(sp + tp, max_norm=MAX_NORM)

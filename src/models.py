@@ -135,9 +135,12 @@ class MTLModel(nn.Module):
 
     def compute_l2(self, l2_shared: float = 0.0, l2_task: float = 1e-5) -> torch.Tensor:
         ls = l2_shared * sum(p.norm(2) ** 2
-                             for p in self.shared_parameters() if p.requires_grad)
+                             #for p in self.shared_parameters() if p.requires_grad)
+                             for p in self.shared_parameters() if p.requires_grad and p.ndim >= 2)
+
         lt = l2_task   * sum(p.norm(2) ** 2
-                             for p in self.task_specific_parameters() if p.requires_grad)
+                             #for p in self.task_specific_parameters() if p.requires_grad)
+                             for p in self.task_specific_parameters() if p.requires_grad and p.ndim >= 2)
         return ls + lt
 
 
@@ -252,9 +255,13 @@ class MTLTransferModel(nn.Module):
 
     def compute_l2(self, l2_shared: float = 0.0, l2_task: float = 1e-5) -> torch.Tensor:
         ls = l2_shared * sum(p.norm(2) ** 2
-                             for p in self.backbone_parameters() if p.requires_grad)
+                             #for p in self.backbone_parameters() if p.requires_grad)
+                             for p in self.backbone_parameters() if p.requires_grad and p.ndim >= 2)
+
         lt = l2_task   * sum(p.norm(2) ** 2
-                             for p in self.task_specific_parameters() if p.requires_grad)
+                             #for p in self.task_specific_parameters() if p.requires_grad)
+                             for p in self.task_specific_parameters() if p.requires_grad and p.ndim >= 2)
+
         return ls + lt
 
     def add_task_head(self) -> int:

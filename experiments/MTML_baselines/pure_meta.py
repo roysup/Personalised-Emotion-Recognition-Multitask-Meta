@@ -407,7 +407,8 @@ def _adapt_single_model(model, sup_loader, inner_steps, inner_lr,
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(adapted(Xb), yb)
             # Uniform L2 on ALL parameters
-            l2_reg = l2_lambda * sum(torch.sum(p ** 2) for p in adapted.parameters())
+            #l2_reg = l2_lambda * sum(torch.sum(p ** 2) for p in adapted.parameters())
+            l2_reg = l2_lambda * sum(torch.sum(p ** 2) for p in adapted.parameters() if p.ndim >= 2)
             total = loss + l2_reg
             if not torch.isnan(total):
                 total.backward()

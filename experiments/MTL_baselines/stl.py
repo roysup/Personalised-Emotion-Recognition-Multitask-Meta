@@ -65,7 +65,8 @@ def _train_participant(task_idx, label_type, lr, l2_lambda,
             X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b), y_b)
-            l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
+            #l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
+            l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad and p.ndim >= 2)
             total = loss + l2_reg
             if torch.isnan(total):
                 raise ValueError(f"NaN at epoch {epoch+1} [task {task_idx} {label_type.upper()}]")
@@ -129,7 +130,8 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas,
                             X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
                             opt.zero_grad(set_to_none=True)
                             loss = lfn(model(X_b), y_b)
-                            l2_reg = l2 * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
+                            #l2_reg = l2 * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
+                            l2_reg = l2 * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad and p.ndim >= 2)
                             total = loss + l2_reg
                             total.backward()
                             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)

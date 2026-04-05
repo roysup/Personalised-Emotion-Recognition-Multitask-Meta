@@ -490,8 +490,11 @@ def _finetune_user(base_model, user_train_df, label_type, lr_ft, uid,
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b, tids), y_b)
             # L2 on backbone + new head only (not old pre-training heads)
-            l2 = (L2_SHARED * sum(p.norm(2)**2 for p in backbone_params if p.requires_grad) +
-                  L2_TASK   * sum(p.norm(2)**2 for p in new_head_params if p.requires_grad))
+            #l2 = (L2_SHARED * sum(p.norm(2)**2 for p in backbone_params if p.requires_grad) +
+                  #L2_TASK   * sum(p.norm(2)**2 for p in new_head_params if p.requires_grad))
+            l2 = (L2_SHARED * sum(p.norm(2)**2 for p in backbone_params if p.requires_grad and p.ndim >= 2) + 
+                  L2_TASK   * sum(p.norm(2)**2 for p in new_head_params if p.requires_grad and p.ndim >= 2))
+            
             total = loss + l2
             if torch.isnan(total):
                 raise ValueError(f"NaN finetune [pid {uid}, ep {ep+1}]")
