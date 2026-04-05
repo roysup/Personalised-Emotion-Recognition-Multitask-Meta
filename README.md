@@ -328,7 +328,7 @@ Experiments are conducted on three VR-based physiological datasets — **VREED**
 ```
 .
 ├── src/                        # config, data, models, training, utils
-├── datasets/dataset_configs/   # per-dataset loaders + unified load_dataset()
+├── datasets/dataset_configs/   # # dataset-specific loading and preprocessing
 ├── experiments/
 │   ├── MTL_baselines/          # pstl, stl, mtl_hps, mtl_uw, mtl_pcgrad
 │   ├── MTML_baselines/         # si, tlft, mtl_retrain, transfer_mtl,
