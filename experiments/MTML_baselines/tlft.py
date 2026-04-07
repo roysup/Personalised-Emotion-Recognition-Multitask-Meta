@@ -231,17 +231,32 @@ if __name__ == '__main__':
 
     ar_stds = compute_per_participant_stds(results_ar, 'ar')
     va_stds = compute_per_participant_stds(results_va, 'va')
+    # final_results = {
+    #     'train_participants': train_ps, 'test_participants': test_ps,
+    #     'best_hyperparameters': {
+    #         'AR': {'lr_pre': best_lr_pre_ar, 'lr_ft': best_lr_ft_ar, 'l2': best_l2_ar},
+    #         'VA': {'lr_pre': best_lr_pre_va, 'lr_ft': best_lr_ft_va, 'l2': best_l2_va}},
+    #     **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
+    #     **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
+    #     'test_results_per_participant_ar': results_ar,
+    #     'test_results_per_participant_va': results_va,
+    #     'cm_ar': agg['cm_ar'], 'cm_va': agg['cm_va'],
+    # }
+    
+    
     final_results = {
-        'train_participants': train_ps, 'test_participants': test_ps,
-        'best_hyperparameters': {
-            'AR': {'lr_pre': best_lr_pre_ar, 'lr_ft': best_lr_ft_ar, 'l2': best_l2_ar},
-            'VA': {'lr_pre': best_lr_pre_va, 'lr_ft': best_lr_ft_va, 'l2': best_l2_va}},
-        **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
-        **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
-        'test_results_per_participant_ar': results_ar,
-        'test_results_per_participant_va': results_va,
-        'cm_ar': agg['cm_ar'], 'cm_va': agg['cm_va'],
-    }
+    'train_participants': train_ps, 'test_participants': test_ps,
+    'best_hyperparameters': {
+        'AR': {'lr_pre': best_lr_pre_ar, 'lr_ft': best_lr_ft_ar, 'l2': best_l2_ar},
+        'VA': {'lr_pre': best_lr_pre_va, 'lr_ft': best_lr_ft_va, 'l2': best_l2_va}},
+    **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
+    **{f'va_{k}': agg[f'va_{k}'] for k in ['acc','precision','recall','f1','auc']},
+    **ar_stds, **va_stds,       
+    'test_results_per_participant_ar': results_ar,
+    'test_results_per_participant_va': results_va,
+    'cm_ar': agg['cm_ar'], 'cm_va': agg['cm_va'],}
+    
+    
     with open(os.path.join(output_dir, 'tlft_results.pkl'), 'wb') as f:
         pickle.dump(final_results, f)
 
