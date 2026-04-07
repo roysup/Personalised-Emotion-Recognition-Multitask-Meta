@@ -50,7 +50,7 @@ UW_LOG_VAR_LR_VA = 1e-3
 # =============================
 # META-LEARNING DEFAULTS
 # =============================
-META_STEPS   = 50
+META_STEPS   = 200 #50
 META_LR      = 0.01
 INNER_STEPS  = 10
 INNER_LR     = 1e-3
