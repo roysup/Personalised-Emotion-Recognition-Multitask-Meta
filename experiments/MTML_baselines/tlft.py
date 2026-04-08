@@ -134,7 +134,7 @@ def hyperparameter_tuning(label_type, df, cfg, device, output_dir):
                     tr_df  = df[df['participant_trial_encoded'].isin(tr_pte)].reset_index(drop=True)
                     Xpre, ypre = _get_windows(tr_df, label_type, cfg)
                     if len(Xpre) == 0: continue
-                    base = pretrain(Xpre, ypre, lr_pre, l2, EPOCHS, cfg, device)
+                    base = pretrain(Xpre, ypre, lr_pre, l2, TF_EPOCHS_PRE, cfg, device)
                     val_f1s = []
                     for pid in val_ps:
                         if pid not in splits: continue

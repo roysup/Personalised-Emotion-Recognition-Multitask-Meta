@@ -443,7 +443,7 @@ def _pretrain_mtl(label_type, train_data_dict, lr_pt, lr_task,
         avg = running / len(loader)
         sched.step(avg)
         if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"  [{label_type.upper()}] Epoch {epoch+1}/{EPOCHS}  loss={avg:.4f}")
+            print(f"  [{label_type.upper()}] Epoch {epoch+1}/{TF_EPOCHS_PRE}  loss={avg:.4f}")
         if avg < best_loss:
             best_loss = avg
             torch.save(model.state_dict(), ckpt)
