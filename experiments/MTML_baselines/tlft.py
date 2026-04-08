@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
 from config import (SEED, EPOCHS, MAX_NORM, N_FOLDS, PSTL_BATCH_SIZE,
-                    TF_LR_PRE, TF_LR_FT, FT_EPOCHS, L2_TASK, RESULTS_DIR)
+                    TF_LR_PRE, TF_LR_FT, FT_EPOCHS, L2_TASK, TF_EPOCHS_PRE, RESULTS_DIR)
 import numpy as np
 import pickle
 import torch
@@ -193,13 +193,13 @@ if __name__ == '__main__':
     print('\n' + '='*60 + '\nPRETRAINING AR\n' + '='*60)
     Xpre_ar, ypre_ar = _get_windows(pretrain_df, 'AR', cfg)
     set_all_seeds(SEED)
-    base_ar = pretrain(Xpre_ar, ypre_ar, best_lr_pre_ar, best_l2_ar, EPOCHS, cfg, device)
+    base_ar = pretrain(Xpre_ar, ypre_ar, best_lr_pre_ar, best_l2_ar, TF_EPOCHS_PRE, cfg, device) 
     torch.save(base_ar.state_dict(), os.path.join(output_dir, 'base_model_ar_final.pth'))
 
     print('\n' + '='*60 + '\nPRETRAINING VA\n' + '='*60)
     Xpre_va, ypre_va = _get_windows(pretrain_df, 'VA', cfg)
     set_all_seeds(SEED)
-    base_va = pretrain(Xpre_va, ypre_va, best_lr_pre_va, best_l2_va, EPOCHS, cfg, device)
+    base_va = pretrain(Xpre_va, ypre_va, best_lr_pre_va, best_l2_va, TF_EPOCHS_PRE, cfg, device)
     torch.save(base_va.state_dict(), os.path.join(output_dir, 'base_model_va_final.pth'))
 
     results_ar, results_va = [], []

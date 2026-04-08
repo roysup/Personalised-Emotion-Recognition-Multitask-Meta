@@ -382,7 +382,7 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
 from config import (SEED, EPOCHS, MAX_NORM, FT_EPOCHS, N_FOLDS,
                     TRANSFER_MTL_LR_PT, TRANSFER_MTL_LR_FT,
-                    MTL_TASK_LR,
+                    MTL_TASK_LR, TF_EPOCHS_PRE, 
                     L2_SHARED, L2_TASK, RESULTS_DIR)
 import numpy as np
 import pickle
@@ -424,7 +424,7 @@ def _pretrain_mtl(label_type, train_data_dict, lr_pt, lr_task,
     best_loss = float('inf')
     ckpt = os.path.join(output_dir, f'pretrain_{label_type}.pt')
 
-    for epoch in range(EPOCHS):
+    for epoch in range(TF_EPOCHS_PRE):
         model.train()
         running = 0.0
         for batch in loader:

@@ -23,6 +23,7 @@ STRIDE      = 1280
 N_FOLDS     = 5
 MAX_NORM    = 1.0
 EPOCHS      = 30
+TF_EPOCHS_PRE  = 25 
 FT_EPOCHS   = 5 #10   # fine-tuning epochs (transfer_mtl.py, tlft.py)
 
 # =============================
