@@ -206,17 +206,24 @@ if __name__ == '__main__':
     #     'va', [MTL_SHARED_LR], [MTL_TASK_LR], [L2_TASK],
     #     df, cfg, device, OUTPUT_DIR)
     
-    best_sh_ar, best_tk_ar, best_l2_ar = hyperparameter_tuning(
-    'ar', [cfg.get('mtl_shared_lr_ar', MTL_SHARED_LR)],
-          [cfg.get('mtl_task_lr_ar',   MTL_TASK_LR)],
-          [cfg.get('l2_task_ar',       L2_TASK)],
-    df, cfg, device, OUTPUT_DIR)
+    # best_sh_ar, best_tk_ar, best_l2_ar = hyperparameter_tuning(
+    # 'ar', [cfg.get('mtl_shared_lr_ar', MTL_SHARED_LR)],
+    #       [cfg.get('mtl_task_lr_ar',   MTL_TASK_LR)],
+    #       [cfg.get('l2_task_ar',       L2_TASK)],
+    # df, cfg, device, OUTPUT_DIR)
 
-    best_sh_va, best_tk_va, best_l2_va = hyperparameter_tuning(
-        'va', [cfg.get('mtl_shared_lr_va', MTL_SHARED_LR)],
-            [cfg.get('mtl_task_lr_va',   MTL_TASK_LR)],
-            [cfg.get('l2_task_va',       L2_TASK)],
-        df, cfg, device, OUTPUT_DIR)
+    # best_sh_va, best_tk_va, best_l2_va = hyperparameter_tuning(
+    #     'va', [cfg.get('mtl_shared_lr_va', MTL_SHARED_LR)],
+    #         [cfg.get('mtl_task_lr_va',   MTL_TASK_LR)],
+    #         [cfg.get('l2_task_va',       L2_TASK)],
+    #     df, cfg, device, OUTPUT_DIR)
+    
+    best_sh_ar = cfg.get('mtl_shared_lr_ar', MTL_SHARED_LR)
+    best_tk_ar = cfg.get('mtl_task_lr_ar',   MTL_TASK_LR)
+    best_l2_ar = cfg.get('l2_task_ar',       L2_TASK)
+    best_sh_va = cfg.get('mtl_shared_lr_va', MTL_SHARED_LR)
+    best_tk_va = cfg.get('mtl_task_lr_va',   MTL_TASK_LR)
+    best_l2_va = cfg.get('l2_task_va',       L2_TASK)
 
     # Prepare train/test data
     train_data, test_data = {}, {}
