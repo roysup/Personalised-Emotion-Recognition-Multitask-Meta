@@ -240,7 +240,7 @@ _DATASET_REGISTRY = {
     'window_size':    2560,
     'stride':         1280,
     'pstl_batch':     32,
-    'stl_batch':      8,
+    'stl_batch':      4, #8,
     'mtl_batch':      34,
     'splits':         DSSN_EQ_SPLITS,
     'test_participants': DSSN_EQ_TEST_PARTICIPANTS,
@@ -251,12 +251,12 @@ _DATASET_REGISTRY = {
     'uw_logvar_lr_ar': 4e-3,
     'uw_logvar_lr_va': 1e-3,
     
-    'mtl_shared_lr_ar': 0.0001, #3e-4, #1e-4,
-    'mtl_task_lr_ar':   0.0001, #1e-4, #3e-4,
+    'mtl_shared_lr_ar': 3e-4, #1e-4,
+    'mtl_task_lr_ar':   1e-4, #3e-4,
     'l2_task_ar':       1e-5,
     
-    'mtl_shared_lr_va': 0.0001, #3e-4, #1e-4,
-    'mtl_task_lr_va':   0.0001, #1e-4, #5e-4,
+    'mtl_shared_lr_va': 3e-4, #1e-4,
+    'mtl_task_lr_va':   1e-4, #5e-4,
     'l2_task_va':       1e-5, #1e-4,
     },
         
