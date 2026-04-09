@@ -250,14 +250,24 @@ _DATASET_REGISTRY = {
     'trial_col':      'Trial',
     'uw_logvar_lr_ar': 4e-3,
     'uw_logvar_lr_va': 1e-3,
-    'mtl_shared_lr_ar': 1e-4,
-    'mtl_task_lr_ar':   3e-4,
-    'l2_task_ar':       1e-5,
-    'mtl_shared_lr_va': 1e-4,
-    'mtl_task_lr_va':   5e-4,
-    'l2_task_va':       1e-4,
-    },
     
+    'mtl_shared_lr_ar': 3e-4, #1e-4,
+    'mtl_task_lr_ar':   1e-4, #3e-4,
+    'l2_task_ar':       1e-5,
+    
+    'mtl_shared_lr_va': 3e-4, #1e-4,
+    'mtl_task_lr_va':   1e-4, #5e-4,
+    'l2_task_va':       1e-5, #1e-4,
+    },
+        
+    # 'mtl_shared_lr_ar': 3e-4,
+    # 'mtl_task_lr_ar':   1e-4,
+    # 'l2_task_ar':       1e-5,
+    
+    # 'mtl_shared_lr_va': 3e-4,
+    # 'mtl_task_lr_va':   1e-4,
+    # 'l2_task_va':       1e-5,
+        
     'dssn_em': {
         'csv_path':       os.path.join(DATA_DIR, 'DSSN_EM_data_v2.csv'),
         'pkl_path':       os.path.join(DATA_DIR, 'unique_id_trials_DSSN_EM_v2.pkl'),
