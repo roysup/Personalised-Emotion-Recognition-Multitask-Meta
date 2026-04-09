@@ -63,7 +63,7 @@ K_PER_CLASS  = None   # balanced k-shot: None = all windows; int = k per class
 # =============================
 TF_LR_PRE          = 1e-3
 TF_LR_FT           = 1e-4 #3
-TRANSFER_MTL_LR_PT = 1e-4
+TRANSFER_MTL_LR_PT = 3e-4 #1e-4
 TRANSFER_MTL_LR_FT = 5e-5
 
 # =============================
