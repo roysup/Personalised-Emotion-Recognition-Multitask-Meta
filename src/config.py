@@ -239,7 +239,7 @@ _DATASET_REGISTRY = {
     'input_dim':      3,
     'window_size':    2560,
     'stride':         1280,
-    'pstl_batch':     32,
+    'pstl_batch':     28, #32,
     'stl_batch':      2, #10, #8,
     'mtl_batch':      34,
     'splits':         DSSN_EQ_SPLITS,
