@@ -207,10 +207,12 @@ if __name__ == '__main__':
     test_df  = df[df['participant_trial_encoded'].isin(_test_set)].reset_index(drop=True)
 
     # Hyperparameter tuning
-    best_lr_ar, best_l2_ar = hyperparameter_tuning(
-        'ar', [MTL_SHARED_LR], [L2_TASK], train_df, cfg, device, OUTPUT_DIR)
-    best_lr_va, best_l2_va = hyperparameter_tuning(
-        'va', [MTL_SHARED_LR], [L2_TASK], train_df, cfg, device, OUTPUT_DIR)
+    # best_lr_ar, best_l2_ar = hyperparameter_tuning(
+    #     'ar', [MTL_SHARED_LR], [L2_TASK], train_df, cfg, device, OUTPUT_DIR)
+    # best_lr_va, best_l2_va = hyperparameter_tuning(
+    #     'va', [MTL_SHARED_LR], [L2_TASK], train_df, cfg, device, OUTPUT_DIR)
+    best_lr_ar = best_lr_va = MTL_SHARED_LR
+    best_l2_ar = best_l2_va = L2_TASK
 
     # Train final models
     print("\n" + "="*60 + "\nTRAINING AR\n" + "="*60)
