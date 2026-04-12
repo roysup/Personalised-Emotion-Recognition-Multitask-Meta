@@ -476,12 +476,17 @@ if __name__ == '__main__':
     print(f"K_PER_CLASS: {K_PER_CLASS}")
 
     # Hyperparameter tuning on train participants only
-    best_meta_lr_ar, best_inner_lr_ar, best_l2s_ar, best_l2t_ar = \
-        hyperparameter_tuning('ar', df, splits, train_ps, cfg, device, output_dir,
-                              balanced_k_per_class=K_PER_CLASS)
-    best_meta_lr_va, best_inner_lr_va, best_l2s_va, best_l2t_va = \
-        hyperparameter_tuning('va', df, splits, train_ps, cfg, device, output_dir,
-                              balanced_k_per_class=K_PER_CLASS)
+    # best_meta_lr_ar, best_inner_lr_ar, best_l2s_ar, best_l2t_ar = \
+    #     hyperparameter_tuning('ar', df, splits, train_ps, cfg, device, output_dir,
+    #                           balanced_k_per_class=K_PER_CLASS)
+    # best_meta_lr_va, best_inner_lr_va, best_l2s_va, best_l2t_va = \
+    #     hyperparameter_tuning('va', df, splits, train_ps, cfg, device, output_dir,
+    #                           balanced_k_per_class=K_PER_CLASS)
+    
+    best_meta_lr_ar = best_meta_lr_va = META_LR
+    best_inner_lr_ar = best_inner_lr_va = INNER_LR
+    best_l2s_ar = best_l2s_va = L2_SHARED
+    best_l2t_ar = best_l2t_va = L2_TASK
 
     for lt in ['ar', 'va']:
         if lt == 'ar':
