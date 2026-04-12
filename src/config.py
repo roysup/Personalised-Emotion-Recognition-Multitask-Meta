@@ -240,7 +240,7 @@ _DATASET_REGISTRY = {
     'window_size':    2560,
     'stride':         1280,
     'pstl_batch':     32,
-    'stl_batch':      4, #8,
+    'stl_batch':      10, #8,
     'mtl_batch':      34,
     'splits':         DSSN_EQ_SPLITS,
     'test_participants': DSSN_EQ_TEST_PARTICIPANTS,
