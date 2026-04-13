@@ -263,9 +263,9 @@ _DATASET_REGISTRY = {
     'mtl_task_lr_va':   1e-4, #5e-4,
     'l2_task_va':       1e-5, #1e-4,
     'transfer_mtl_lr_pt_ar': 3e-5, #3e-4,
-    'transfer_mtl_lr_pt_va': 3e-5, #3e-4,
+    'transfer_mtl_lr_pt_va': 3e-4,
     'transfer_mtl_lr_ft_ar': 3e-4,
-    'transfer_mtl_lr_ft_va': 3e-4,
+    'transfer_mtl_lr_ft_va': 1e-3, #3e-4,
     },
         
      'dssn_em': {
