@@ -23,7 +23,7 @@ STRIDE      = 1280
 N_FOLDS     = 5
 MAX_NORM    = 1.0
 EPOCHS      = 30
-TF_EPOCHS_PRE  = 25 
+TF_EPOCHS_PRE  = 25 #30
 FT_EPOCHS   = 5 #10   # fine-tuning epochs (transfer_mtl.py, tlft.py)
 
 # =============================
@@ -62,7 +62,7 @@ K_PER_CLASS  = None   # balanced k-shot: None = all windows; int = k per class
 # SCRIPT-SPECIFIC LR DEFAULTS
 # =============================
 TF_LR_PRE          = 1e-3
-TF_LR_FT           = 1e-4 #3
+TF_LR_FT           = 1e-4 #1e-3
 TRANSFER_MTL_LR_PT = 3e-4 #1e-4
 TRANSFER_MTL_LR_FT = 3e-4 #5e-5
 
@@ -260,15 +260,7 @@ _DATASET_REGISTRY = {
     'l2_task_va':       1e-5, #1e-4,
     },
         
-    # 'mtl_shared_lr_ar': 3e-4,
-    # 'mtl_task_lr_ar':   1e-4,
-    # 'l2_task_ar':       1e-5,
-    
-    # 'mtl_shared_lr_va': 3e-4,
-    # 'mtl_task_lr_va':   1e-4,
-    # 'l2_task_va':       1e-5,
-        
-    'dssn_em': {
+     'dssn_em': {
         'csv_path':       os.path.join(DATA_DIR, 'DSSN_EM_data_v2.csv'),
         'pkl_path':       os.path.join(DATA_DIR, 'unique_id_trials_DSSN_EM_v2.pkl'),
         'feature_cols':   ['eda_values', 'bvp_values', 'heart_rate'],
