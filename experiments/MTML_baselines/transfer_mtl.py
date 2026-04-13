@@ -297,8 +297,15 @@ if __name__ == '__main__':
     # best_lr_pt_va, best_lr_ft_va = hyperparameter_tuning(
     #     'va', df, cfg, device, output_dir)
     
-    best_lr_pt_ar = best_lr_pt_va = TRANSFER_MTL_LR_PT
-    best_lr_ft_ar = best_lr_ft_va = TRANSFER_MTL_LR_FT
+    #best_lr_pt_ar = best_lr_pt_va = TRANSFER_MTL_LR_PT
+    #best_lr_ft_ar = best_lr_ft_va = TRANSFER_MTL_LR_FT
+    
+    
+    best_lr_pt_ar = cfg['transfer_mtl_lr_pt_ar']
+    best_lr_ft_ar = cfg['transfer_mtl_lr_ft_ar']
+    best_lr_pt_va = cfg['transfer_mtl_lr_pt_va']
+    best_lr_ft_va = cfg['transfer_mtl_lr_ft_va']
+
 
     # Build train data dict
     train_data = {}

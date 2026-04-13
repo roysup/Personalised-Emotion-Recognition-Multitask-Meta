@@ -211,6 +211,10 @@ _DATASET_REGISTRY = {
         'trial_col':      'Trial',
         'uw_logvar_lr_ar': 4e-3,
         'uw_logvar_lr_va': 1e-3,
+        'transfer_mtl_lr_pt_ar': 3e-4,
+    'transfer_mtl_lr_pt_va': 3e-4,
+    'transfer_mtl_lr_ft_ar': 3e-4,
+    'transfer_mtl_lr_ft_va': 3e-4,
     },
     # 'dssn_eq': {
     #     'csv_path':       os.path.join(DATA_DIR, 'DSSN_EQ_data_v3.csv'),
@@ -258,6 +262,10 @@ _DATASET_REGISTRY = {
     'mtl_shared_lr_va': 3e-4, #1e-4,
     'mtl_task_lr_va':   1e-4, #5e-4,
     'l2_task_va':       1e-5, #1e-4,
+    'transfer_mtl_lr_pt_ar': 3e-5, #3e-4,
+    'transfer_mtl_lr_pt_va': 3e-4,
+    'transfer_mtl_lr_ft_ar': 3e-4,
+    'transfer_mtl_lr_ft_va': 3e-4,
     },
         
      'dssn_em': {
@@ -278,6 +286,10 @@ _DATASET_REGISTRY = {
         'trial_col':      'Trial',
         'uw_logvar_lr_ar': 4e-3,
         'uw_logvar_lr_va': 1e-3,
+        'transfer_mtl_lr_pt_ar': 3e-4,
+    'transfer_mtl_lr_pt_va': 3e-4,
+    'transfer_mtl_lr_ft_ar': 3e-4,
+    'transfer_mtl_lr_ft_va': 3e-4,
     },
 }
 
