@@ -168,8 +168,11 @@ if __name__ == '__main__':
     if 'trial_global' not in df.columns:
         df['trial_global'] = df['ID'].astype(str) + '_' + df['Trial'].astype(str)
 
-    best_lr_ar, best_l2_ar = hyperparameter_tuning('AR', df, cfg, device, output_dir)
-    best_lr_va, best_l2_va = hyperparameter_tuning('VA', df, cfg, device, output_dir)
+    # best_lr_ar, best_l2_ar = hyperparameter_tuning('AR', df, cfg, device, output_dir)
+    # best_lr_va, best_l2_va = hyperparameter_tuning('VA', df, cfg, device, output_dir)
+    
+    best_lr_ar = best_lr_va = MTL_SHARED_LR
+    best_l2_ar = best_l2_va = L2_TASK
 
     train_pte = [f"{p}_{v}" for p in train_ps if p in splits for v in splits[p]['train']]
     test_pte  = [f"{p}_{v}" for p in test_ps  if p in splits for v in splits[p]['test']]

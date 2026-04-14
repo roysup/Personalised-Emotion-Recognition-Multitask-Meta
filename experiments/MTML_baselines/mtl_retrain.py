@@ -219,8 +219,9 @@ if __name__ == '__main__':
     print(f"\nL2: Shared={L2_SHARED}, Task={L2_TASK}")
 
     # Hyperparameter tuning on train participants only
-    best_lr_ar = hyperparameter_tuning('ar', df, cfg, device, output_dir)
-    best_lr_va = hyperparameter_tuning('va', df, cfg, device, output_dir)
+    # best_lr_ar = hyperparameter_tuning('ar', df, cfg, device, output_dir)
+    # best_lr_va = hyperparameter_tuning('va', df, cfg, device, output_dir)
+    best_lr_ar = best_lr_va = MTL_SHARED_LR
 
     # Build base train data (train participants' train videos)
     base_train_data = {}
