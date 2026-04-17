@@ -314,8 +314,8 @@ _DATASET_REGISTRY = {
     'input_dim':      3,
     'window_size':    2560,
     'stride':         1280,
-    'pstl_batch':     32, #28, #32,
-    'stl_batch':      8, #2, #10, #8,
+    'pstl_batch':     32, 
+    'stl_batch':      8, 
     'mtl_batch':      34,
     'splits':         DSSN_EQ_SPLITS,
     'test_participants': DSSN_EQ_TEST_PARTICIPANTS,
@@ -333,10 +333,12 @@ _DATASET_REGISTRY = {
     'mtl_shared_lr_va': 3e-4, #1e-4,
     'mtl_task_lr_va':   1e-4, #5e-4,
     'l2_task_va':       1e-5, #1e-4,
-    'transfer_mtl_lr_pt_ar': 3e-5, #3e-4,
-    'transfer_mtl_lr_pt_va': 3e-4,
+    
+    'transfer_mtl_lr_pt_ar': 3e-4, #3e-5, #3e-4,
+    'transfer_mtl_lr_pt_va': 1e-5, #3e-4,
+    
     'transfer_mtl_lr_ft_ar': 3e-4,
-    'transfer_mtl_lr_ft_va': 1e-3, #3e-4,
+    'transfer_mtl_lr_ft_va': 1e-5, #1e-3, #3e-4,
     },
         
      'dssn_em': {
