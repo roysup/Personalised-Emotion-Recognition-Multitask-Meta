@@ -282,11 +282,12 @@ _DATASET_REGISTRY = {
         'trial_col':      'Trial',
         'uw_logvar_lr_ar': 4e-3,
         'uw_logvar_lr_va': 1e-3,
-        'transfer_mtl_lr_pt_ar': 3e-4,
-    'transfer_mtl_lr_pt_va': 3e-4,
-    'transfer_mtl_lr_ft_ar': 3e-4,
-    'transfer_mtl_lr_ft_va': 3e-4,
+        'transfer_mtl_lr_pt_ar': 3e-3, #4
+        'transfer_mtl_lr_pt_va': 3e-4,
+        'transfer_mtl_lr_ft_ar': 3e-3, #4
+        'transfer_mtl_lr_ft_va': 3e-4,
     },
+    
     # 'dssn_eq': {
     #     'csv_path':       os.path.join(DATA_DIR, 'DSSN_EQ_data_v3.csv'),
     #     'pkl_path':       os.path.join(DATA_DIR, 'unique_id_trials_DSSN_EQ_v2.pkl'),
