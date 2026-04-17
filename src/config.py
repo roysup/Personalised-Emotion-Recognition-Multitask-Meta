@@ -286,6 +286,24 @@ _DATASET_REGISTRY = {
         'transfer_mtl_lr_pt_va': 3e-4,
         'transfer_mtl_lr_ft_ar': 3e-3, #4
         'transfer_mtl_lr_ft_va': 3e-4,
+        
+        # Reptile-MT / Reptile-MI — AR
+        'reptile_meta_lr_ar':     0.03,
+        'reptile_inner_lr_ar':    3e-4,
+        'reptile_inner_steps_ar': 5,
+        'reptile_episode_size_ar': 3,
+        'reptile_l2_shared_ar':   1e-5,
+        'reptile_l2_task_ar':     1e-4,
+        'reptile_meta_steps_ar':  200,
+        
+        # Reptile-MT / Reptile-MI — VA
+        'reptile_meta_lr_va':     0.01,
+        'reptile_inner_lr_va':    1e-3,
+        'reptile_inner_steps_va': 10,
+        'reptile_episode_size_va': 5,
+        'reptile_l2_shared_va':   0.0,
+        'reptile_l2_task_va':     1e-5,
+        'reptile_meta_steps_va':  200,
     },
     
     # 'dssn_eq': {
@@ -339,6 +357,24 @@ _DATASET_REGISTRY = {
     'transfer_mtl_lr_pt_va': 3e-4,
     'transfer_mtl_lr_ft_ar': 3e-3, #3e-4,
     'transfer_mtl_lr_ft_va': 3e-4,
+    
+    # Reptile-MT / Reptile-MI — AR
+    'reptile_meta_lr_ar':     0.01,
+    'reptile_inner_lr_ar':    3e-4,
+    'reptile_inner_steps_ar': 10,
+    'reptile_episode_size_ar': 3,
+    'reptile_l2_shared_ar':   1e-5,
+    'reptile_l2_task_ar':     1e-5,
+    'reptile_meta_steps_ar':  200,
+    
+    # Reptile-MT / Reptile-MI — VA
+    'reptile_meta_lr_va':     0.01,
+    'reptile_inner_lr_va':    1e-4,
+    'reptile_inner_steps_va': 5,
+    'reptile_episode_size_va': 2,
+    'reptile_l2_shared_va':   1e-5,
+    'reptile_l2_task_va':     1e-4,
+    'reptile_meta_steps_va':  200,
         
     # 'transfer_mtl_lr_pt_ar': 3e-4, #3e-5, #3e-4,
     # 'transfer_mtl_lr_pt_va': 1e-5, #3e-4,
@@ -375,6 +411,24 @@ _DATASET_REGISTRY = {
         'transfer_mtl_lr_pt_va': 3e-4,
         'transfer_mtl_lr_ft_ar': 3e-3, #3e-4,
         'transfer_mtl_lr_ft_va': 3e-4,
+        
+        # Reptile-MT / Reptile-MI — AR
+        'reptile_meta_lr_ar':     0.01,
+        'reptile_inner_lr_ar':    1e-4,
+        'reptile_inner_steps_ar': 5,
+        'reptile_episode_size_ar': 3,
+        'reptile_l2_shared_ar':   1e-5,
+        'reptile_l2_task_ar':     1e-4,
+        'reptile_meta_steps_ar':  300,
+    
+        # Reptile-MT / Reptile-MI — VA
+        'reptile_meta_lr_va':     0.01,
+        'reptile_inner_lr_va':    1e-4,
+        'reptile_inner_steps_va': 5,
+        'reptile_episode_size_va': 2,
+        'reptile_l2_shared_va':   1e-5,
+        'reptile_l2_task_va':     1e-4,
+        'reptile_meta_steps_va':  300,
     },
 }
 
