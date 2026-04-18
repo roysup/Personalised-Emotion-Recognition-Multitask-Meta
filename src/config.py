@@ -468,6 +468,7 @@ _DATASET_REGISTRY = {
     'reptile_l2_task_va':     1e-5,
     'reptile_meta_steps_va':  200,
     },
+    }
 }
 
 
