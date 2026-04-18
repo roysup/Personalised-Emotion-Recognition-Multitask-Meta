@@ -430,23 +430,43 @@ _DATASET_REGISTRY = {
         # 'reptile_l2_task_va':     1e-4,
         # 'reptile_meta_steps_va':  300,
         
-    # Reptile-MT / Reptile-MI — AR
-    'reptile_meta_lr_ar':     0.01,    # unchanged
-    'reptile_inner_lr_ar':    3e-4,    # up from 1e-4 — backbone needs to actually move
-    'reptile_inner_steps_ar': 10,      # up from 5 — short window means each step is small
-    'reptile_episode_size_ar': 5,      # up from 3 — more diversity per outer update
-    'reptile_l2_shared_ar':   1e-4,    # up from 1e-5 — stronger reg to prevent overfit
-    'reptile_l2_task_ar':     1e-4,    # unchanged
-    'reptile_meta_steps_ar':  500,     # up from 300 — more steps for short-window regime
+    # # Reptile-MT / Reptile-MI — AR
+    # 'reptile_meta_lr_ar':     0.01,    # unchanged
+    # 'reptile_inner_lr_ar':    3e-4,    # up from 1e-4 — backbone needs to actually move
+    # 'reptile_inner_steps_ar': 10,      # up from 5 — short window means each step is small
+    # 'reptile_episode_size_ar': 5,      # up from 3 — more diversity per outer update
+    # 'reptile_l2_shared_ar':   1e-4,    # up from 1e-5 — stronger reg to prevent overfit
+    # 'reptile_l2_task_ar':     1e-4,    # unchanged
+    # 'reptile_meta_steps_ar':  500,     # up from 300 — more steps for short-window regime
     
-    # Reptile-MT / Reptile-MI — VA
-    'reptile_meta_lr_va':     0.01,    # unchanged
-    'reptile_inner_lr_va':    3e-4,    # up from 1e-4
-    'reptile_inner_steps_va': 10,      # up from 5
-    'reptile_episode_size_va': 5,      # up from 2
-    'reptile_l2_shared_va':   1e-4,    # up from 1e-5
-    'reptile_l2_task_va':     1e-4,    # unchanged
-    'reptile_meta_steps_va':  500,     # up from 300
+    # # Reptile-MT / Reptile-MI — VA
+    # 'reptile_meta_lr_va':     0.01,    # unchanged
+    # 'reptile_inner_lr_va':    3e-4,    # up from 1e-4
+    # 'reptile_inner_steps_va': 10,      # up from 5
+    # 'reptile_episode_size_va': 5,      # up from 2
+    # 'reptile_l2_shared_va':   1e-4,    # up from 1e-5
+    # 'reptile_l2_task_va':     1e-4,    # unchanged
+    # 'reptile_meta_steps_va':  500,     # up from 300
+    
+         
+    'dssn_em': {
+    # Reptile-MT / Reptile-MI — AR (revert to global defaults)
+    'reptile_meta_lr_ar':     0.01,
+    'reptile_inner_lr_ar':    1e-3,    # back to default
+    'reptile_inner_steps_ar': 10,      # back to default
+    'reptile_episode_size_ar': 5,      # back to default
+    'reptile_l2_shared_ar':   0.0,     # back to default
+    'reptile_l2_task_ar':     1e-5,    # back to default
+    'reptile_meta_steps_ar':  200,     # back to default
+    
+    # Reptile-MT / Reptile-MI — VA (revert to global defaults)
+    'reptile_meta_lr_va':     0.01,
+    'reptile_inner_lr_va':    1e-3,
+    'reptile_inner_steps_va': 10,
+    'reptile_episode_size_va': 5,
+    'reptile_l2_shared_va':   0.0,
+    'reptile_l2_task_va':     1e-5,
+    'reptile_meta_steps_va':  200,
     },
 }
 
