@@ -309,7 +309,6 @@ _DATASET_REGISTRY = {
         'reptile_meta_steps_va':  200,
         },
      }
-}
 
 def get_dataset_config(name: str) -> dict:
     """
