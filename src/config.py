@@ -23,8 +23,6 @@ STRIDE      = 1280
 N_FOLDS     = 5
 MAX_NORM    = 1.0
 EPOCHS      = 30
-TF_EPOCHS_PRE  = 25 #30
-FT_EPOCHS   = 5 #10   # fine-tuning epochs (transfer_mtl.py, tlft.py)
 
 # =============================
 # BATCH SIZES
@@ -57,14 +55,6 @@ INNER_STEPS  = 10
 INNER_LR     = 1e-3
 EPISODE_SIZE = 5
 K_PER_CLASS  = 10 #None   # balanced k-shot: None = all windows; int = k per class
-
-# =============================
-# SCRIPT-SPECIFIC LR DEFAULTS
-# =============================
-TF_LR_PRE          = 1e-3
-TF_LR_FT           = 1e-4 #1e-3
-TRANSFER_MTL_LR_PT = 3e-4 #1e-4
-TRANSFER_MTL_LR_FT = 3e-4 #5e-5
 
 # =============================
 # MTML TEST/TRAIN SPLIT
@@ -117,46 +107,6 @@ VREED_SPLITS = {
     116: {'train': [2, 10, 12, 1, 6, 5, 7, 3, 9, 4], 'test': [8, 11]},
 }
 
-# =============================
-# DSSN_EQ 5/1 TRAIN/TEST SPLITS  (34 participants, IDs 2,5,8,9,10-39)
-# =============================
-# DSSN_EQ_SPLITS = {
-#         2: {'train': [3, 5, 1, 6, 4], 'test': [2]},
-#         5: {'train': [6, 2, 5, 1, 4], 'test': [3]},
-#         8: {'train': [6, 5, 3, 4, 2], 'test': [1]},
-#         9: {'train': [2, 6, 3, 4, 5], 'test': [1]},
-#         10: {'train': [5, 2, 3, 1, 4], 'test': [6]},
-#         11: {'train': [2, 1, 5, 3, 6], 'test': [4]},
-#         12: {'train': [2, 4, 3, 5, 1], 'test': [6]},
-#         13: {'train': [2, 6, 4, 1, 3], 'test': [5]},
-#         14: {'train': [1, 6, 2, 3, 4], 'test': [5]},
-#         15: {'train': [4, 1, 6, 3, 2], 'test': [5]},
-#         16: {'train': [2, 4, 5, 1, 3], 'test': [6]},
-#         17: {'train': [4, 5, 1, 3, 6], 'test': [2]},
-#         18: {'train': [2, 1, 6, 4, 5], 'test': [3]},
-#         19: {'train': [2, 5, 4, 1, 3], 'test': [6]},
-#         20: {'train': [6, 1, 3, 5, 4], 'test': [2]},
-#         21: {'train': [5, 6, 4, 3, 2], 'test': [1]},
-#         22: {'train': [4, 2, 1, 6, 5], 'test': [3]},
-#         23: {'train': [1, 5, 4, 6, 3], 'test': [2]},
-#         24: {'train': [1, 3, 4, 5, 6], 'test': [2]},
-#         25: {'train': [6, 4, 1, 2, 3], 'test': [5]},
-#         26: {'train': [3, 4, 5, 6, 2], 'test': [1]},
-#         27: {'train': [6, 2, 4, 5, 3], 'test': [1]},
-#         28: {'train': [1, 3, 4, 6, 5], 'test': [2]},
-#         29: {'train': [2, 1, 5, 3, 6], 'test': [4]},
-#         30: {'train': [6, 3, 5, 4, 2], 'test': [1]},
-#         31: {'train': [4, 5, 2, 3, 1], 'test': [6]},
-#         32: {'train': [5, 2, 4, 1, 6], 'test': [3]}, 
-#         33: {'train': [5, 1, 3, 2, 6], 'test': [4]},
-#         34: {'train': [6, 5, 2, 3, 4], 'test': [1]},
-#         35: {'train': [4, 6, 3, 1, 2], 'test': [5]},
-#         36: {'train': [4, 3, 6, 2, 5], 'test': [1]},
-#         37: {'train': [5, 6, 1, 2, 4], 'test': [3]},
-#         38: {'train': [4, 2, 5, 1, 6], 'test': [3]},
-#         39: {'train': [3, 5, 6, 2, 1], 'test': [4]}
-# }
-
 DSSN_EQ_SPLITS = {
         2: {'train': [3, 5, 1, 6], 'test': [2, 4]},
         5: {'train': [6, 2, 5, 1], 'test': [3, 4]},
@@ -193,44 +143,6 @@ DSSN_EQ_SPLITS = {
         38: {'train': [4, 2, 5, 1], 'test': [3, 6]},
         39: {'train': [3, 5, 6, 2], 'test': [4, 1]},
 }
-
-
-# =============================
-# DSSN_EM 5/1 TRAIN/TEST SPLITS  (30 participants, IDs 10–39)
-# =============================
-# DSSN_EM_SPLITS = {
-#     10: {'train': [5, 2, 3, 1, 4], 'test': [6]},
-#     11: {'train': [2, 1, 5, 3, 6], 'test': [4]},
-#     12: {'train': [2, 4, 3, 5, 1], 'test': [6]},
-#     13: {'train': [2, 6, 4, 1, 3], 'test': [5]},
-#     14: {'train': [1, 6, 2, 3, 4], 'test': [5]},
-#     15: {'train': [4, 1, 6, 3, 2], 'test': [5]},
-#     16: {'train': [2, 4, 5, 1, 3], 'test': [6]},
-#     17: {'train': [4, 5, 1, 3, 6], 'test': [2]},
-#     18: {'train': [2, 1, 6, 4, 5], 'test': [3]},
-#     19: {'train': [6, 5, 4, 1, 2], 'test': [3]},
-#     20: {'train': [6, 1, 3, 5, 4], 'test': [2]},
-#     21: {'train': [5, 6, 4, 3, 2], 'test': [1]},
-#     22: {'train': [4, 2, 1, 6, 5], 'test': [3]},
-#     23: {'train': [1, 5, 4, 6, 3], 'test': [2]},
-#     24: {'train': [1, 3, 4, 5, 6], 'test': [2]},
-#     25: {'train': [6, 4, 1, 2, 3], 'test': [5]},
-#     26: {'train': [3, 4, 5, 6, 2], 'test': [1]},
-#     27: {'train': [6, 2, 4, 5, 3], 'test': [1]},
-#     28: {'train': [1, 3, 4, 6, 5], 'test': [2]},
-#     #29: {'train': [2, 1, 5, 3, 6], 'test': [4]},
-#     30: {'train': [6, 3, 5, 4, 2], 'test': [1]},
-#     31: {'train': [4, 5, 2, 3, 1], 'test': [6]},
-#     32: {'train': [5, 2, 3, 1, 4], 'test': [6]},
-#     33: {'train': [5, 1, 3, 2, 6], 'test': [4]},
-#     34: {'train': [6, 5, 2, 3, 4], 'test': [1]},
-#     #35: {'train': [4, 6, 3, 1, 2], 'test': [5]},
-#     36: {'train': [4, 3, 6, 2, 5], 'test': [1]},
-#     37: {'train': [5, 6, 1, 2, 4], 'test': [3]},
-#     38: {'train': [4, 2, 5, 1, 6], 'test': [3]},
-#     39: {'train': [3, 5, 6, 2, 1], 'test': [4]},
-# }
-
 
 DSSN_EM_SPLITS = {
     10: {'train': [5, 2, 3, 1], 'test': [6, 4]},
@@ -293,10 +205,6 @@ _DATASET_REGISTRY = {
         'trial_col':      'Trial',
         'uw_logvar_lr_ar': 4e-3,
         'uw_logvar_lr_va': 1e-3,
-        'transfer_mtl_lr_pt_ar': 3e-3, #4
-        'transfer_mtl_lr_pt_va': 3e-4,
-        'transfer_mtl_lr_ft_ar': 3e-3, #4
-        'transfer_mtl_lr_ft_va': 3e-4,
         
         # Reptile-MT / Reptile-MI — AR
         'reptile_meta_lr_ar':     0.03,
@@ -317,87 +225,50 @@ _DATASET_REGISTRY = {
         'reptile_meta_steps_va':  200,
     },
     
-    # 'dssn_eq': {
-    #     'csv_path':       os.path.join(DATA_DIR, 'DSSN_EQ_data_v3.csv'),
-    #     'pkl_path':       os.path.join(DATA_DIR, 'unique_id_trials_DSSN_EQ_v2.pkl'),
-    #     'feature_cols':   ['ECG 1', 'ECG 2', 'GSR'],
-    #     'input_dim':      3,
-    #     'window_size':    2560,
-    #     'stride':         1280,
-    #     'pstl_batch':     32,
-    #     'stl_batch':      8,
-    #     'mtl_batch':      34,
-    #     'splits':         DSSN_EQ_SPLITS,
-    #     'test_participants': DSSN_EQ_TEST_PARTICIPANTS,
-    #     'results_prefix': 'DSSN_EQ',
-    #     'column_renames': {'video': 'Trial'}, 
-    #     'id_trial_col':   'ID_video',
-    #     'trial_col':      'Trial',
-    #     'uw_logvar_lr_ar': 4e-3,
-    #     'uw_logvar_lr_va': 1e-3,
-    # },
-    
     'dssn_eq': {
-    'csv_path':       os.path.join(DATA_DIR, 'DSSN_EQ_data_v3.csv'),
-    'pkl_path':       os.path.join(DATA_DIR, 'unique_id_trials_DSSN_EQ_v2.pkl'),
-    'feature_cols':   ['ECG 1', 'ECG 2', 'GSR'],
-    'input_dim':      3,
-    'window_size':    2560,
-    'stride':         1280,
-    'pstl_batch':     32, 
-    'stl_batch':      8, 
-    'mtl_batch':      34,
-    'splits':         DSSN_EQ_SPLITS,
-    'test_participants': DSSN_EQ_TEST_PARTICIPANTS,
-    'results_prefix': 'DSSN_EQ',
-    'column_renames': {'video': 'Trial'},
-    'id_trial_col':   'ID_video',
-    'trial_col':      'Trial',
-    'uw_logvar_lr_ar': 4e-3,
-    'uw_logvar_lr_va': 1e-3,
-    
-    'mtl_shared_lr_ar': 3e-4, #1e-4,
-    'mtl_task_lr_ar':   1e-4, #3e-4,
-    'l2_task_ar':       1e-5,
-    
-    'mtl_shared_lr_va': 3e-4, #1e-4,
-    'mtl_task_lr_va':   1e-4, #5e-4,
-    'l2_task_va':       1e-5, #1e-4,
-    
-    'transfer_mtl_lr_pt_ar': 3e-3, #3e-4,
-    'transfer_mtl_lr_pt_va': 3e-4,
-    'transfer_mtl_lr_ft_ar': 3e-3, #3e-4,
-    'transfer_mtl_lr_ft_va': 3e-4,
-    
-    # Reptile-MT / Reptile-MI — AR
-    'reptile_meta_lr_ar':     0.01,
-    'reptile_inner_lr_ar':    3e-4,
-    'reptile_inner_steps_ar': 10,
-    'reptile_episode_size_ar': 3,
-    'reptile_l2_shared_ar':   1e-5,
-    'reptile_l2_task_ar':     1e-5,
-    'reptile_meta_steps_ar':  200,
-    
-    # Reptile-MT / Reptile-MI — VA
-    'reptile_meta_lr_va':     0.01,
-    'reptile_inner_lr_va':    1e-4,
-    'reptile_inner_steps_va': 5,
-    'reptile_episode_size_va': 2,
-    'reptile_l2_shared_va':   1e-5,
-    'reptile_l2_task_va':     1e-4,
-    'reptile_meta_steps_va':  200,
+        'csv_path':       os.path.join(DATA_DIR, 'DSSN_EQ_data_v3.csv'),
+        'pkl_path':       os.path.join(DATA_DIR, 'unique_id_trials_DSSN_EQ_v2.pkl'),
+        'feature_cols':   ['ECG 1', 'ECG 2', 'GSR'],
+        'input_dim':      3,
+        'window_size':    2560,
+        'stride':         1280,
+        'pstl_batch':     32, 
+        'stl_batch':      8, 
+        'mtl_batch':      34,
+        'splits':         DSSN_EQ_SPLITS,
+        'test_participants': DSSN_EQ_TEST_PARTICIPANTS,
+        'results_prefix': 'DSSN_EQ',
+        'column_renames': {'video': 'Trial'},
+        'id_trial_col':   'ID_video',
+        'trial_col':      'Trial',
+        'uw_logvar_lr_ar': 4e-3,
+        'uw_logvar_lr_va': 1e-3,
         
-    # 'transfer_mtl_lr_pt_ar': 3e-4, #3e-5, #3e-4,
-    # 'transfer_mtl_lr_pt_va': 1e-5, #3e-4,
-    
-    # 'transfer_mtl_lr_ft_ar': 3e-4,
-    # 'transfer_mtl_lr_ft_va': 1e-5, #1e-3, #3e-4,
-    
-    # 'transfer_mtl_lr_pt_ar': 3e-5, #3e-4,
-    # 'transfer_mtl_lr_pt_va': 3e-4,
-    
-    # 'transfer_mtl_lr_ft_ar': 3e-4,
-    # 'transfer_mtl_lr_ft_va': 1e-3, #3e-4,
+        'mtl_shared_lr_ar': 3e-4, #1e-4,
+        'mtl_task_lr_ar':   1e-4, #3e-4,
+        'l2_task_ar':       1e-5,
+        
+        'mtl_shared_lr_va': 3e-4, #1e-4,
+        'mtl_task_lr_va':   1e-4, #5e-4,
+        'l2_task_va':       1e-5, #1e-4,
+        
+        # Reptile-MT / Reptile-MI — AR
+        'reptile_meta_lr_ar':     0.01,
+        'reptile_inner_lr_ar':    3e-4,
+        'reptile_inner_steps_ar': 10,
+        'reptile_episode_size_ar': 3,
+        'reptile_l2_shared_ar':   1e-5,
+        'reptile_l2_task_ar':     1e-5,
+        'reptile_meta_steps_ar':  200,
+        
+        # Reptile-MT / Reptile-MI — VA
+        'reptile_meta_lr_va':     0.01,
+        'reptile_inner_lr_va':    1e-4,
+        'reptile_inner_steps_va': 5,
+        'reptile_episode_size_va': 2,
+        'reptile_l2_shared_va':   1e-5,
+        'reptile_l2_task_va':     1e-4,
+        'reptile_meta_steps_va':  200,
     },
         
      'dssn_em': {
@@ -418,70 +289,27 @@ _DATASET_REGISTRY = {
         'trial_col':      'Trial',
         'uw_logvar_lr_ar': 4e-3,
         'uw_logvar_lr_va': 1e-3,
-        'transfer_mtl_lr_pt_ar': 3e-3, #3e-4,
-        'transfer_mtl_lr_pt_va': 3e-4,
-        'transfer_mtl_lr_ft_ar': 3e-3, #3e-4,
-        'transfer_mtl_lr_ft_va': 3e-4,
         
-        # # Reptile-MT / Reptile-MI — AR
-        # 'reptile_meta_lr_ar':     0.01,
-        # 'reptile_inner_lr_ar':    1e-4,
-        # 'reptile_inner_steps_ar': 5,
-        # 'reptile_episode_size_ar': 3,
-        # 'reptile_l2_shared_ar':   1e-5,
-        # 'reptile_l2_task_ar':     1e-4,
-        # 'reptile_meta_steps_ar':  300,
+        # Reptile-MT / Reptile-MI — AR (revert to global defaults)
+        'reptile_meta_lr_ar':     0.01,
+        'reptile_inner_lr_ar':    1e-3,    # back to default
+        'reptile_inner_steps_ar': 10,      # back to default
+        'reptile_episode_size_ar': 5,      # back to default
+        'reptile_l2_shared_ar':   0.0,     # back to default
+        'reptile_l2_task_ar':     1e-5,    # back to default
+        'reptile_meta_steps_ar':  200,     # back to default
     
-        # # Reptile-MT / Reptile-MI — VA
-        # 'reptile_meta_lr_va':     0.01,
-        # 'reptile_inner_lr_va':    1e-4,
-        # 'reptile_inner_steps_va': 5,
-        # 'reptile_episode_size_va': 2,
-        # 'reptile_l2_shared_va':   1e-5,
-        # 'reptile_l2_task_va':     1e-4,
-        # 'reptile_meta_steps_va':  300,
-        
-    # # Reptile-MT / Reptile-MI — AR
-    # 'reptile_meta_lr_ar':     0.01,    # unchanged
-    # 'reptile_inner_lr_ar':    3e-4,    # up from 1e-4 — backbone needs to actually move
-    # 'reptile_inner_steps_ar': 10,      # up from 5 — short window means each step is small
-    # 'reptile_episode_size_ar': 5,      # up from 3 — more diversity per outer update
-    # 'reptile_l2_shared_ar':   1e-4,    # up from 1e-5 — stronger reg to prevent overfit
-    # 'reptile_l2_task_ar':     1e-4,    # unchanged
-    # 'reptile_meta_steps_ar':  500,     # up from 300 — more steps for short-window regime
-    
-    # # Reptile-MT / Reptile-MI — VA
-    # 'reptile_meta_lr_va':     0.01,    # unchanged
-    # 'reptile_inner_lr_va':    3e-4,    # up from 1e-4
-    # 'reptile_inner_steps_va': 10,      # up from 5
-    # 'reptile_episode_size_va': 5,      # up from 2
-    # 'reptile_l2_shared_va':   1e-4,    # up from 1e-5
-    # 'reptile_l2_task_va':     1e-4,    # unchanged
-    # 'reptile_meta_steps_va':  500,     # up from 300
-    
-         
-    'dssn_em': {
-    # Reptile-MT / Reptile-MI — AR (revert to global defaults)
-    'reptile_meta_lr_ar':     0.01,
-    'reptile_inner_lr_ar':    1e-3,    # back to default
-    'reptile_inner_steps_ar': 10,      # back to default
-    'reptile_episode_size_ar': 5,      # back to default
-    'reptile_l2_shared_ar':   0.0,     # back to default
-    'reptile_l2_task_ar':     1e-5,    # back to default
-    'reptile_meta_steps_ar':  200,     # back to default
-    
-    # Reptile-MT / Reptile-MI — VA (revert to global defaults)
-    'reptile_meta_lr_va':     0.01,
-    'reptile_inner_lr_va':    1e-3,
-    'reptile_inner_steps_va': 10,
-    'reptile_episode_size_va': 5,
-    'reptile_l2_shared_va':   0.0,
-    'reptile_l2_task_va':     1e-5,
-    'reptile_meta_steps_va':  200,
-    },
-    }
+        # Reptile-MT / Reptile-MI — VA (revert to global defaults)
+        'reptile_meta_lr_va':     0.01,
+        'reptile_inner_lr_va':    1e-3,
+        'reptile_inner_steps_va': 10,
+        'reptile_episode_size_va': 5,
+        'reptile_l2_shared_va':   0.0,
+        'reptile_l2_task_va':     1e-5,
+        'reptile_meta_steps_va':  200,
+        },
+     }
 }
-
 
 def get_dataset_config(name: str) -> dict:
     """
