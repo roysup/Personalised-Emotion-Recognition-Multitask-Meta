@@ -69,7 +69,9 @@ TRANSFER_MTL_LR_FT = 3e-4 #5e-5
 # =============================
 # MTML TEST/TRAIN SPLIT
 # =============================
-TEST_PARTICIPANTS       = [105, 109, 112, 125, 131, 132]
+#TEST_PARTICIPANTS       = [105, 109, 112, 125, 131, 132]
+TEST_PARTICIPANTS       = [105, 109, 112, 125, 131, 134]
+
 TRAIN_PARTICIPANTS      = None  # derived per-script
 DSSN_EQ_TEST_PARTICIPANTS = [28, 32, 36, 17, 39, 25]
 # DSSN_EM_TEST_PARTICIPANTS = [17, 25, 28, 32, 36, 39]
