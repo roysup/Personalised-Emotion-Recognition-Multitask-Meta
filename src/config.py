@@ -60,7 +60,8 @@ K_PER_CLASS  = 10 #None   # balanced k-shot: None = all windows; int = k per cla
 # MTML TEST/TRAIN SPLIT
 # =============================
 #TEST_PARTICIPANTS       = [105, 109, 112, 125, 131, 132]
-TEST_PARTICIPANTS       = [105, 109, 112, 125, 131, 134]
+#TEST_PARTICIPANTS       = [105, 109, 112, 125, 131, 134]
+TEST_PARTICIPANTS       = [105, 109, 112, 125, 128, 134]
 
 TRAIN_PARTICIPANTS      = None  # derived per-script
 DSSN_EQ_TEST_PARTICIPANTS = [28, 32, 36, 17, 39, 25]
