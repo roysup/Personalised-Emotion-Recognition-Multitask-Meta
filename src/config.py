@@ -62,18 +62,8 @@ K_PER_CLASS  = 10 #None   # balanced k-shot: None = all windows; int = k per cla
 #TEST_PARTICIPANTS       = [105, 109, 112, 125, 131, 132]
 #TEST_PARTICIPANTS       = [105, 109, 112, 125, 131, 134]
 TEST_PARTICIPANTS       = [105, 109, 112, 125, 128, 134]
-
 TRAIN_PARTICIPANTS      = None  # derived per-script
 DSSN_EQ_TEST_PARTICIPANTS = [28, 32, 36, 17, 39, 25]
-# DSSN_EM_TEST_PARTICIPANTS = [17, 25, 28, 32, 36, 39]
-#DSSN_EM_TEST_PARTICIPANTS = [24, 28, 34, 19, 27, 31] #24, 34, 27
-#DSSN_EM_TEST_PARTICIPANTS = [24, 25, 28, 34, 36, 39]
-##DSSN_EM_TEST_PARTICIPANTS = [24, 25, 28, 34, 19, 39] #P19, P20, P27, or P31 
-#DSSN_EM_TEST_PARTICIPANTS = [24, 20, 28, 34, 19, 39] #P19, P20, P27, or P31 
-#DSSN_EM_TEST_PARTICIPANTS = [17, 25, 28, 34, 36, 39]
-#DSSN_EM_TEST_PARTICIPANTS = [17, 25, 28, 32, 34, 39]
-#DSSN_EM_TEST_PARTICIPANTS = [17, 25, 28, 32, 34, 39]
-#DSSN_EM_TEST_PARTICIPANTS = [17, 25, 28, 32, 31, 34]
 DSSN_EM_TEST_PARTICIPANTS = [17, 25, 28, 32, 31, 39]
 
 # =============================
@@ -165,13 +155,11 @@ DSSN_EM_SPLITS = {
     26: {'train': [3, 4, 5, 6], 'test': [1, 2]},
     27: {'train': [6, 2, 4, 5], 'test': [1, 3]},
     28: {'train': [1, 3, 4, 6], 'test': [2, 5]},
-    #29: {'train': [2, 1, 5, 3, 6], 'test': [4]},
     30: {'train': [6, 3, 5, 4], 'test': [1, 2]},
     31: {'train': [4, 5, 2, 3], 'test': [6, 1]},
     32: {'train': [5, 2, 3, 1], 'test': [6, 4]},
     33: {'train': [5, 1, 3, 2], 'test': [4, 6]},
     34: {'train': [6, 5, 2, 3], 'test': [1, 4]},
-    #35: {'train': [4, 6, 3, 1, 2], 'test': [5]},
     36: {'train': [4, 3, 6, 2], 'test': [1, 5]},
     37: {'train': [5, 6, 1, 2], 'test': [3, 4]},
     38: {'train': [4, 2, 5, 1], 'test': [3, 6]},
