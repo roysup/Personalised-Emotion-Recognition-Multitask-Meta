@@ -42,6 +42,7 @@ MTL_SCRIPTS = [
     ('MTL-HPS',         '{p}_MTL/{p}_hps_results',     'hps_tuned_results.pkl'),
     ('MTL-PCGrad',      '{p}_MTL/{p}_hps_pcgrad_results', 'hps_pcgrad_results.pkl'),
     ('MTL-UW',          '{p}_MTL/{p}_hps_uw_results',  'hps_uw_results.pkl'),
+    ('MTL-TAG',         '{p}_TAG/{p}_tag_results',     'tag_results.pkl'),
 ]
 
 MTML_SCRIPTS = [

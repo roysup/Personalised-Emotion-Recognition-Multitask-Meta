@@ -20,6 +20,7 @@ EXPERIMENTS = [
     ('MTL_baselines', 'mtl_hps.py'),
     ('MTL_baselines', 'mtl_pcgrad.py'),
     ('MTL_baselines', 'mtl_uw.py'),
+    ('TAG_analysis',    'tag_train.py'),
     # MTML Baselines
     ('MTML_baselines', 'si.py'),
     ('MTML_baselines', 'tlft.py'),
