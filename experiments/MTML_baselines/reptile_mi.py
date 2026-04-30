@@ -37,7 +37,7 @@ def parse_args():
 # MI-GUIDED TASK EPISODES
 # ================================================================
 
-def _digitize_series(x, n_bins=16):
+def _digitize_series(x, n_bins=18):
     x = np.asarray(x).reshape(-1)
     if len(x) == 0:
         return np.zeros(1, dtype=int)
