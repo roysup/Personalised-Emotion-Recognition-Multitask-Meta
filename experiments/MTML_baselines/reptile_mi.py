@@ -48,25 +48,37 @@ def _digitize_series(x, n_bins=16):
     return np.digitize(x, bins[1:-1], right=False).astype(int)
 
 
-def _compute_task_mi_signature(task_df, label_type='ar', feature_cols=None,
-                                max_points=20000):
+# def _compute_task_mi_signature(task_df, label_type='ar', feature_cols=None,
+#                                 max_points=20000):
+#     if feature_cols is None:
+#         feature_cols = ['ECG', 'GSR']
+
+#     df_local = task_df.copy()
+#     if len(df_local) > max_points:
+#         idx = np.linspace(0, len(df_local) - 1, max_points).astype(int)
+#         df_local = df_local.iloc[idx].reset_index(drop=True)
+
+#     disc_cols = []
+#     for col in feature_cols:
+#         disc_cols.append(_digitize_series(df_local[col].values, n_bins=16))
+
+#     y_col = 'AR_Rating' if label_type == 'ar' else 'VA_Rating'
+#     y_disc = df_local[y_col].astype(int).values
+
+#     return np.stack(disc_cols + [y_disc], axis=1).astype(int)
+
+def _compute_task_mi_signature(task_df, label_type='ar', feature_cols=None):
     if feature_cols is None:
         feature_cols = ['ECG', 'GSR']
 
-    df_local = task_df.copy()
-    if len(df_local) > max_points:
-        idx = np.linspace(0, len(df_local) - 1, max_points).astype(int)
-        df_local = df_local.iloc[idx].reset_index(drop=True)
-
     disc_cols = []
     for col in feature_cols:
-        disc_cols.append(_digitize_series(df_local[col].values, n_bins=16))
+        disc_cols.append(_digitize_series(task_df[col].values, n_bins=18))
 
     y_col = 'AR_Rating' if label_type == 'ar' else 'VA_Rating'
-    y_disc = df_local[y_col].astype(int).values
+    y_disc = task_df[y_col].astype(int).values
 
     return np.stack(disc_cols + [y_disc], axis=1).astype(int)
-
 
 def build_task_mi_matrix(tasks_data, splits, label_type='ar',
                          feature_cols=None, use_train_trials_only=True):
