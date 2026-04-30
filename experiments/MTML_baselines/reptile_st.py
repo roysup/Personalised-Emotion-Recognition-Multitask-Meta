@@ -69,16 +69,32 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
             feature_cols=cfg['feature_cols'],
             balanced_k_per_class=balanced_k_per_class)
 
+        # adapted_base, adapted_head = adapt_inner_loop(
+        #     base, heads[pid], sup_loader, label_type,
+        #     INNER_STEPS, inner_lr, device,
+        #     l2_shared=l2_shared, l2_task=l2_task)
+
+        # # Reptile outer update — backbone only
+        # reptile_outer_update(base, [adapted_base], meta_lr)
+
+        # # Keep updated head per-participant
+        # heads[pid] = adapted_head
+        
+        
         adapted_base, adapted_head = adapt_inner_loop(
             base, heads[pid], sup_loader, label_type,
             INNER_STEPS, inner_lr, device,
             l2_shared=l2_shared, l2_task=l2_task)
 
-        # Reptile outer update — backbone only
+        # Reptile outer update — backbone
         reptile_outer_update(base, [adapted_base], meta_lr)
 
-        # Keep updated head per-participant
-        heads[pid] = adapted_head
+        # Reptile outer update on persistent head (symmetric to backbone)
+        with torch.no_grad():
+            for p_persistent, p_adapted in zip(heads[pid].parameters(),
+                                                adapted_head.parameters()):
+                p_persistent.data.add_(meta_lr * (p_adapted.data - p_persistent.data))
+                
 
         if (step + 1) % 10 == 0 or step == 0:
             print(f"  [{label_type.upper()}] Reptile-ST step {step+1}/{META_STEPS}")
@@ -131,12 +147,24 @@ def hyperparameter_tuning(label_type, df, splits, train_ps, cfg, device,
                                 stride=cfg['stride'],
                                 feature_cols=cfg['feature_cols'],
                                 balanced_k_per_class=balanced_k_per_class)
+                            # adapted_base, adapted_head = adapt_inner_loop(
+                            #     base, heads[pid], sup_loader, label_type,
+                            #     INNER_STEPS, inner_lr, device,
+                            #     l2_shared=l2_s, l2_task=l2_t)
+                            # reptile_outer_update(base, [adapted_base], meta_lr)
+                            # heads[pid] = adapted_head
+                            
                             adapted_base, adapted_head = adapt_inner_loop(
                                 base, heads[pid], sup_loader, label_type,
                                 INNER_STEPS, inner_lr, device,
                                 l2_shared=l2_s, l2_task=l2_t)
                             reptile_outer_update(base, [adapted_base], meta_lr)
-                            heads[pid] = adapted_head
+                            with torch.no_grad():
+                                for p_persistent, p_adapted in zip(
+                                        heads[pid].parameters(),
+                                        adapted_head.parameters()):
+                                    p_persistent.data.add_(
+                                        meta_lr * (p_adapted.data - p_persistent.data))
 
                         # Adapt + evaluate on fold's val participants
                         val_f1s = []

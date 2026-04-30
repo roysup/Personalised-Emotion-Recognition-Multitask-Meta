@@ -235,13 +235,24 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
                 feature_cols=cfg['feature_cols'],
                 balanced_k_per_class=balanced_k_per_class)
 
+            # adapted_head = _adapt_episode_step(
+            #     episode_base, heads[pid], sup_loader, label_type,
+            #     inner_steps, inner_lr, device,
+            #     l2_shared=l2_shared, l2_task=l2_task)
+
+            # heads[pid] = adapted_head
+            
             adapted_head = _adapt_episode_step(
                 episode_base, heads[pid], sup_loader, label_type,
                 inner_steps, inner_lr, device,
                 l2_shared=l2_shared, l2_task=l2_task)
 
-            heads[pid] = adapted_head
-
+            # Reptile outer update on persistent head (symmetric to backbone)
+            with torch.no_grad():
+                for p_persistent, p_adapted in zip(heads[pid].parameters(),
+                                                    adapted_head.parameters()):
+                    p_persistent.data.add_(meta_lr * (p_adapted.data - p_persistent.data))
+                    
         reptile_outer_update(base, [episode_base], meta_lr)
 
         if (step + 1) % 10 == 0 or step == 0:
