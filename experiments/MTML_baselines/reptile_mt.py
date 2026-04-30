@@ -8,6 +8,12 @@ Reptile outer update moves the meta-parameters toward the result.
 Heads are kept per-participant and updated individually.
 At test time: fresh head per test participant, adapt both.
 
+Per-task heads use a separate `meta_head_lr` (cfg key meta_head_lr_{ar,va}):
+  1.0 = full replacement (heads[pid] = adapted_head equivalent)
+  <1.0 = EMA-style smoothing across episodes
+The naming parallels meta_lr but heads are NOT meta-parameters in the
+Reptile sense — at test time a fresh head is initialized.
+
 Supports optional balanced k-shot support sampling via K_PER_CLASS:
   None  = use all available support windows (default)
   int   = subsample k windows per class (e.g. 20 → 40 total)
@@ -16,7 +22,7 @@ Per-dataset, per-label-type hyperparameters are read from cfg keys:
   reptile_meta_lr_{ar,va}, reptile_inner_lr_{ar,va},
   reptile_inner_steps_{ar,va}, reptile_episode_size_{ar,va},
   reptile_l2_shared_{ar,va}, reptile_l2_task_{ar,va},
-  reptile_meta_steps_{ar,va}
+  reptile_meta_steps_{ar,va}, meta_head_lr_{ar,va}
 with fallback to the module-level globals if a key is absent.
 
 Sign-flip diagnostic runs automatically after evaluation and reports
@@ -34,7 +40,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
-from config import (SEED, META_STEPS, META_LR, MAX_NORM,
+from config import (SEED, META_STEPS, META_LR, META_HEAD_LR, MAX_NORM,
                     INNER_STEPS, INNER_LR, EPISODE_SIZE,
                     N_FOLDS, L2_SHARED, L2_TASK, K_PER_CLASS,
                     RESULTS_DIR)
@@ -65,13 +71,14 @@ def parse_args():
 def _get_reptile_hparams(cfg, lt):
     """Pull per-label-type Reptile hyperparameters from cfg with fallback to globals."""
     return {
-        'meta_lr':      cfg.get(f'reptile_meta_lr_{lt}',      META_LR),
-        'inner_lr':     cfg.get(f'reptile_inner_lr_{lt}',     INNER_LR),
-        'inner_steps':  cfg.get(f'reptile_inner_steps_{lt}',  INNER_STEPS),
-        'episode_size': cfg.get(f'reptile_episode_size_{lt}', EPISODE_SIZE),
-        'l2_shared':    cfg.get(f'reptile_l2_shared_{lt}',    L2_SHARED),
-        'l2_task':      cfg.get(f'reptile_l2_task_{lt}',      L2_TASK),
-        'meta_steps':   cfg.get(f'reptile_meta_steps_{lt}',   META_STEPS),
+        'meta_lr':       cfg.get(f'reptile_meta_lr_{lt}',      META_LR),
+        'meta_head_lr':  cfg.get(f'meta_head_lr_{lt}',         META_HEAD_LR),
+        'inner_lr':      cfg.get(f'reptile_inner_lr_{lt}',     INNER_LR),
+        'inner_steps':   cfg.get(f'reptile_inner_steps_{lt}',  INNER_STEPS),
+        'episode_size':  cfg.get(f'reptile_episode_size_{lt}', EPISODE_SIZE),
+        'l2_shared':     cfg.get(f'reptile_l2_shared_{lt}',    L2_SHARED),
+        'l2_task':       cfg.get(f'reptile_l2_task_{lt}',      L2_TASK),
+        'meta_steps':    cfg.get(f'reptile_meta_steps_{lt}',   META_STEPS),
     }
 
 
@@ -205,7 +212,7 @@ def _adapt_episode_step(episode_base, head, sup_loader, ar_or_va,
 # META-TRAINING
 # =============================
 def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
-                   meta_lr, inner_lr, l2_shared, l2_task,
+                   meta_lr, meta_head_lr, inner_lr, l2_shared, l2_task,
                    inner_steps, episode_size, meta_steps,
                    balanced_k_per_class=None):
     """Reptile-MT meta-training: sequential adaptation within multi-participant episodes."""
@@ -217,6 +224,7 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
         print(f"  [{label_type.upper()}] Balanced k-shot: {balanced_k_per_class} per class")
     else:
         print(f"  [{label_type.upper()}] Using all support windows")
+    print(f"  [{label_type.upper()}] meta_lr={meta_lr}, meta_head_lr={meta_head_lr}")
 
     for step in range(meta_steps):
         episode_ps = rng.choice(train_ps, size=min(episode_size, len(train_ps)),
@@ -234,28 +242,17 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
                 feature_cols=cfg['feature_cols'],
                 balanced_k_per_class=balanced_k_per_class)
 
-            # # Adapt episode_base in place; only the head is copied
-            # adapted_head = _adapt_episode_step(
-            #     episode_base, heads[pid], sup_loader, label_type,
-            #     inner_steps, inner_lr, device,
-            #     l2_shared=l2_shared, l2_task=l2_task)
-
-            # # Keep updated head per-participant
-            # heads[pid] = adapted_head
-            
-            
             # Adapt episode_base in place; only the head is copied
             adapted_head = _adapt_episode_step(
                 episode_base, heads[pid], sup_loader, label_type,
                 inner_steps, inner_lr, device,
                 l2_shared=l2_shared, l2_task=l2_task)
 
-            # Reptile outer update on persistent head (symmetric to backbone)
+            # EMA-style update on persistent head (1.0 = full replace)
             with torch.no_grad():
                 for p_persistent, p_adapted in zip(heads[pid].parameters(),
                                                     adapted_head.parameters()):
-                    p_persistent.data.add_(meta_lr * (p_adapted.data - p_persistent.data))
-                    
+                    p_persistent.data.add_(meta_head_lr * (p_adapted.data - p_persistent.data))
 
         # Outer update: move backbone toward the end of the sequential trajectory
         reptile_outer_update(base, [episode_base], meta_lr)
@@ -278,10 +275,12 @@ def hyperparameter_tuning(label_type, df, splits, train_ps, cfg, device,
     meta_steps   = hp['meta_steps']
     inner_steps  = hp['inner_steps']
     episode_size = hp['episode_size']
+    meta_head_lr = hp['meta_head_lr']
 
     print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type.upper()}] Reptile-MT"
           f"  ({cfg['results_prefix']})\n{'='*60}")
-    print(f"  META_LR={hp['meta_lr']}, INNER_LR={hp['inner_lr']}, "
+    print(f"  META_LR={hp['meta_lr']}, META_HEAD_LR={meta_head_lr}, "
+          f"INNER_LR={hp['inner_lr']}, "
           f"INNER_STEPS={inner_steps}, EPISODE_SIZE={episode_size}, "
           f"META_STEPS={meta_steps}")
     print(f"  L2: Shared={hp['l2_shared']}, Task={hp['l2_task']}")
@@ -326,14 +325,7 @@ def hyperparameter_tuning(label_type, df, splits, train_ps, cfg, device,
                                     stride=cfg['stride'],
                                     feature_cols=cfg['feature_cols'],
                                     balanced_k_per_class=balanced_k_per_class)
-                                
-                                # adapted_head = _adapt_episode_step(
-                                #     episode_base, heads[pid], sup_loader,
-                                #     label_type,
-                                #     inner_steps, inner_lr, device,
-                                #     l2_shared=l2_s, l2_task=l2_t)
-                                # heads[pid] = adapted_head
-                                
+
                                 adapted_head = _adapt_episode_step(
                                     episode_base, heads[pid], sup_loader,
                                     label_type,
@@ -344,8 +336,7 @@ def hyperparameter_tuning(label_type, df, splits, train_ps, cfg, device,
                                             heads[pid].parameters(),
                                             adapted_head.parameters()):
                                         p_persistent.data.add_(
-                                            meta_lr * (p_adapted.data - p_persistent.data))
-                                        
+                                            meta_head_lr * (p_adapted.data - p_persistent.data))
 
                             reptile_outer_update(base, [episode_base], meta_lr)
 
@@ -442,6 +433,7 @@ if __name__ == '__main__':
         set_all_seeds(SEED)
         base = _reptile_train(lt, df, splits, train_ps, cfg, device, output_dir,
                               meta_lr=hp['meta_lr'],
+                              meta_head_lr=hp['meta_head_lr'],
                               inner_lr=hp['inner_lr'],
                               l2_shared=hp['l2_shared'],
                               l2_task=hp['l2_task'],

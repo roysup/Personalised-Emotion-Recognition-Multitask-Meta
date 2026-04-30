@@ -51,6 +51,8 @@ UW_LOG_VAR_LR_VA = 1e-3
 # =============================
 META_STEPS   = 200 #50
 META_LR      = 0.01
+META_HEAD_LR = 1.0   # outer-loop coefficient for per-task heads
+                     # 1.0 = full replacement, <1.0 = EMA smoothing
 INNER_STEPS  = 10
 INNER_LR     = 1e-3
 EPISODE_SIZE = 5
@@ -212,6 +214,8 @@ _DATASET_REGISTRY = {
         'reptile_l2_shared_va':   0.0,
         'reptile_l2_task_va':     1e-5,
         'reptile_meta_steps_va':  200,
+        'meta_head_lr_ar': 1.0,
+        'meta_head_lr_va': 1.0,
     },
     
     'dssn_eq': {
@@ -258,6 +262,8 @@ _DATASET_REGISTRY = {
         'reptile_l2_shared_va':   1e-5,
         'reptile_l2_task_va':     1e-4,
         'reptile_meta_steps_va':  200,
+        'meta_head_lr_ar': 1.0,
+'meta_head_lr_va': 1.0,
     },
         
      'dssn_em': {
@@ -296,6 +302,8 @@ _DATASET_REGISTRY = {
         'reptile_l2_shared_va':   0.0,
         'reptile_l2_task_va':     1e-5,
         'reptile_meta_steps_va':  200,
+        'meta_head_lr_ar': 1.0,
+'meta_head_lr_va': 1.0,
         },
      }
 

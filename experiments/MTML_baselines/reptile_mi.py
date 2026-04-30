@@ -1,6 +1,11 @@
 """
 Reptile MI — Mutual-Information-guided episode sampling.
-[docstring unchanged]
+
+Per-task heads use a separate `meta_head_lr` (cfg key meta_head_lr_{ar,va}):
+  1.0 = full replacement (heads[pid] = adapted_head equivalent)
+  <1.0 = EMA-style smoothing across episodes
+The naming parallels meta_lr but heads are NOT meta-parameters in the
+Reptile sense — at test time a fresh head is initialized.
 """
 import argparse
 import copy
@@ -9,7 +14,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
-from config import (SEED, META_STEPS, META_LR, MAX_NORM,
+from config import (SEED, META_STEPS, META_LR, META_HEAD_LR, MAX_NORM,
                     INNER_STEPS, INNER_LR, EPISODE_SIZE,
                     L2_SHARED, L2_TASK, K_PER_CLASS, RESULTS_DIR)
 import numpy as np
@@ -48,25 +53,6 @@ def _digitize_series(x, n_bins=18):
     return np.digitize(x, bins[1:-1], right=False).astype(int)
 
 
-# def _compute_task_mi_signature(task_df, label_type='ar', feature_cols=None,
-#                                 max_points=20000):
-#     if feature_cols is None:
-#         feature_cols = ['ECG', 'GSR']
-
-#     df_local = task_df.copy()
-#     if len(df_local) > max_points:
-#         idx = np.linspace(0, len(df_local) - 1, max_points).astype(int)
-#         df_local = df_local.iloc[idx].reset_index(drop=True)
-
-#     disc_cols = []
-#     for col in feature_cols:
-#         disc_cols.append(_digitize_series(df_local[col].values, n_bins=16))
-
-#     y_col = 'AR_Rating' if label_type == 'ar' else 'VA_Rating'
-#     y_disc = df_local[y_col].astype(int).values
-
-#     return np.stack(disc_cols + [y_disc], axis=1).astype(int)
-
 def _compute_task_mi_signature(task_df, label_type='ar', feature_cols=None):
     if feature_cols is None:
         feature_cols = ['ECG', 'GSR']
@@ -79,6 +65,7 @@ def _compute_task_mi_signature(task_df, label_type='ar', feature_cols=None):
     y_disc = task_df[y_col].astype(int).values
 
     return np.stack(disc_cols + [y_disc], axis=1).astype(int)
+
 
 def build_task_mi_matrix(tasks_data, splits, label_type='ar',
                          feature_cols=None, use_train_trials_only=True):
@@ -195,7 +182,7 @@ def _adapt_episode_step(episode_base, head, sup_loader, ar_or_va,
 # ================================================================
 
 def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
-                   meta_lr, inner_lr, l2_shared, l2_task,
+                   meta_lr, meta_head_lr, inner_lr, l2_shared, l2_task,
                    meta_steps, inner_steps, episode_size,
                    balanced_k_per_class=None):
     """Reptile-MI: MI-guided episodes, sequential adaptation, backbone-only outer update."""
@@ -216,6 +203,7 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
     print(f"\n[FINAL-{label_type.upper()}] Meta-training on "
           f"{len(task_ids)} train participants")
     print(f"  META_STEPS={meta_steps}, META_LR={meta_lr}, "
+          f"META_HEAD_LR={meta_head_lr}, "
           f"INNER_STEPS={inner_steps}, INNER_LR={inner_lr}")
     print(f"  EPISODE_SIZE={eff_episode_size} (n_similar={n_similar}, n_diverse={n_diverse})")
     print(f"  L2_SHARED={l2_shared}, L2_TASK={l2_task}")
@@ -247,24 +235,17 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
                 feature_cols=cfg['feature_cols'],
                 balanced_k_per_class=balanced_k_per_class)
 
-            # adapted_head = _adapt_episode_step(
-            #     episode_base, heads[pid], sup_loader, label_type,
-            #     inner_steps, inner_lr, device,
-            #     l2_shared=l2_shared, l2_task=l2_task)
-
-            # heads[pid] = adapted_head
-            
             adapted_head = _adapt_episode_step(
                 episode_base, heads[pid], sup_loader, label_type,
                 inner_steps, inner_lr, device,
                 l2_shared=l2_shared, l2_task=l2_task)
 
-            # Reptile outer update on persistent head (symmetric to backbone)
+            # EMA-style update on persistent head (1.0 = full replace)
             with torch.no_grad():
                 for p_persistent, p_adapted in zip(heads[pid].parameters(),
                                                     adapted_head.parameters()):
-                    p_persistent.data.add_(meta_lr * (p_adapted.data - p_persistent.data))
-                    
+                    p_persistent.data.add_(meta_head_lr * (p_adapted.data - p_persistent.data))
+
         reptile_outer_update(base, [episode_base], meta_lr)
 
         if (step + 1) % 10 == 0 or step == 0:
@@ -303,6 +284,7 @@ if __name__ == '__main__':
     hp = {
         'ar': {
             'meta_lr':      cfg.get('reptile_meta_lr_ar',      META_LR),
+            'meta_head_lr': cfg.get('meta_head_lr_ar',         META_HEAD_LR),
             'inner_lr':     cfg.get('reptile_inner_lr_ar',     INNER_LR),
             'inner_steps':  cfg.get('reptile_inner_steps_ar',  INNER_STEPS),
             'episode_size': cfg.get('reptile_episode_size_ar', EPISODE_SIZE),
@@ -312,6 +294,7 @@ if __name__ == '__main__':
         },
         'va': {
             'meta_lr':      cfg.get('reptile_meta_lr_va',      META_LR),
+            'meta_head_lr': cfg.get('meta_head_lr_va',         META_HEAD_LR),
             'inner_lr':     cfg.get('reptile_inner_lr_va',     INNER_LR),
             'inner_steps':  cfg.get('reptile_inner_steps_va',  INNER_STEPS),
             'episode_size': cfg.get('reptile_episode_size_va', EPISODE_SIZE),
@@ -327,7 +310,8 @@ if __name__ == '__main__':
         set_all_seeds(SEED)
         base = _reptile_train(
             lt, df, splits, train_ps, cfg, device, output_dir,
-            meta_lr=h['meta_lr'], inner_lr=h['inner_lr'],
+            meta_lr=h['meta_lr'], meta_head_lr=h['meta_head_lr'],
+            inner_lr=h['inner_lr'],
             l2_shared=h['l2_shared'], l2_task=h['l2_task'],
             meta_steps=h['meta_steps'], inner_steps=h['inner_steps'],
             episode_size=h['episode_size'],

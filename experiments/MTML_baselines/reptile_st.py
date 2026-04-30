@@ -6,6 +6,12 @@ Reptile outer-loop updates backbone only.
 Heads are kept per-participant and updated individually.
 At test time: fresh head per test participant, adapt both.
 
+Per-task heads use a separate `meta_head_lr` (cfg key meta_head_lr_{ar,va}):
+  1.0 = full replacement (heads[pid] = adapted_head equivalent)
+  <1.0 = EMA-style smoothing across episodes
+The naming parallels meta_lr but heads are NOT meta-parameters in the
+Reptile sense — at test time a fresh head is initialized.
+
 Supports optional balanced k-shot support sampling via K_PER_CLASS:
   None  = use all available support windows (default)
   int   = subsample k windows per class (e.g. 20 → 40 total)
@@ -21,7 +27,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
-from config import (SEED, META_STEPS, META_LR,
+from config import (SEED, META_STEPS, META_LR, META_HEAD_LR,
                     INNER_STEPS, INNER_LR,
                     N_FOLDS, L2_SHARED, L2_TASK, K_PER_CLASS,
                     RESULTS_DIR)
@@ -46,7 +52,7 @@ def parse_args():
 
 
 def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
-                   meta_lr, inner_lr, l2_shared, l2_task,
+                   meta_lr, meta_head_lr, inner_lr, l2_shared, l2_task,
                    balanced_k_per_class=None):
     """Reptile-ST: per-participant heads, 1 participant per step, backbone-only outer update."""
     base  = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
@@ -57,6 +63,7 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
         print(f"  [{label_type.upper()}] Balanced k-shot: {balanced_k_per_class} per class")
     else:
         print(f"  [{label_type.upper()}] Using all support windows")
+    print(f"  [{label_type.upper()}] meta_lr={meta_lr}, meta_head_lr={meta_head_lr}")
 
     for step in range(META_STEPS):
         pid = int(rng.choice(train_ps))
@@ -69,18 +76,6 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
             feature_cols=cfg['feature_cols'],
             balanced_k_per_class=balanced_k_per_class)
 
-        # adapted_base, adapted_head = adapt_inner_loop(
-        #     base, heads[pid], sup_loader, label_type,
-        #     INNER_STEPS, inner_lr, device,
-        #     l2_shared=l2_shared, l2_task=l2_task)
-
-        # # Reptile outer update — backbone only
-        # reptile_outer_update(base, [adapted_base], meta_lr)
-
-        # # Keep updated head per-participant
-        # heads[pid] = adapted_head
-        
-        
         adapted_base, adapted_head = adapt_inner_loop(
             base, heads[pid], sup_loader, label_type,
             INNER_STEPS, inner_lr, device,
@@ -89,12 +84,11 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
         # Reptile outer update — backbone
         reptile_outer_update(base, [adapted_base], meta_lr)
 
-        # Reptile outer update on persistent head (symmetric to backbone)
+        # EMA-style update on persistent head (1.0 = full replace)
         with torch.no_grad():
             for p_persistent, p_adapted in zip(heads[pid].parameters(),
                                                 adapted_head.parameters()):
-                p_persistent.data.add_(meta_lr * (p_adapted.data - p_persistent.data))
-                
+                p_persistent.data.add_(meta_head_lr * (p_adapted.data - p_persistent.data))
 
         if (step + 1) % 10 == 0 or step == 0:
             print(f"  [{label_type.upper()}] Reptile-ST step {step+1}/{META_STEPS}")
@@ -112,10 +106,12 @@ def hyperparameter_tuning(label_type, df, splits, train_ps, cfg, device,
     """K-fold CV on train participants to validate Reptile-ST hyperparameters."""
     print(f"\n{'='*60}\nHYPERPARAMETER TUNING [{label_type.upper()}] Reptile-ST"
           f"  ({cfg['results_prefix']})\n{'='*60}")
-    print(f"  META_LR={META_LR}, INNER_LR={INNER_LR}, "
-          f"INNER_STEPS={INNER_STEPS}")
+    print(f"  META_LR={META_LR}, META_HEAD_LR={META_HEAD_LR}, "
+          f"INNER_LR={INNER_LR}, INNER_STEPS={INNER_STEPS}")
     print(f"  L2: Shared={L2_SHARED}, Task={L2_TASK}")
     print(f"  K_PER_CLASS={balanced_k_per_class}")
+
+    meta_head_lr = cfg.get(f'meta_head_lr_{label_type}', META_HEAD_LR)
 
     results = []
     train_folds = make_kfolds(train_ps, seed=SEED)
@@ -147,13 +143,7 @@ def hyperparameter_tuning(label_type, df, splits, train_ps, cfg, device,
                                 stride=cfg['stride'],
                                 feature_cols=cfg['feature_cols'],
                                 balanced_k_per_class=balanced_k_per_class)
-                            # adapted_base, adapted_head = adapt_inner_loop(
-                            #     base, heads[pid], sup_loader, label_type,
-                            #     INNER_STEPS, inner_lr, device,
-                            #     l2_shared=l2_s, l2_task=l2_t)
-                            # reptile_outer_update(base, [adapted_base], meta_lr)
-                            # heads[pid] = adapted_head
-                            
+
                             adapted_base, adapted_head = adapt_inner_loop(
                                 base, heads[pid], sup_loader, label_type,
                                 INNER_STEPS, inner_lr, device,
@@ -164,7 +154,7 @@ def hyperparameter_tuning(label_type, df, splits, train_ps, cfg, device,
                                         heads[pid].parameters(),
                                         adapted_head.parameters()):
                                     p_persistent.data.add_(
-                                        meta_lr * (p_adapted.data - p_persistent.data))
+                                        meta_head_lr * (p_adapted.data - p_persistent.data))
 
                         # Adapt + evaluate on fold's val participants
                         val_f1s = []
@@ -242,24 +232,29 @@ if __name__ == '__main__':
     # best_meta_lr_va, best_inner_lr_va, best_l2s_va, best_l2t_va = \
     #     hyperparameter_tuning('va', df, splits, train_ps, cfg, device, output_dir,
     #                           balanced_k_per_class=K_PER_CLASS)
-    
+
     best_meta_lr_ar = best_meta_lr_va = META_LR
     best_inner_lr_ar = best_inner_lr_va = INNER_LR
     best_l2s_ar = best_l2s_va = L2_SHARED
     best_l2t_ar = best_l2t_va = L2_TASK
+    meta_head_lr_ar = cfg.get('meta_head_lr_ar', META_HEAD_LR)
+    meta_head_lr_va = cfg.get('meta_head_lr_va', META_HEAD_LR)
 
     for lt in ['ar', 'va']:
         if lt == 'ar':
             meta_lr, inner_lr = best_meta_lr_ar, best_inner_lr_ar
             l2_s, l2_t = best_l2s_ar, best_l2t_ar
+            meta_head_lr = meta_head_lr_ar
         else:
             meta_lr, inner_lr = best_meta_lr_va, best_inner_lr_va
             l2_s, l2_t = best_l2s_va, best_l2t_va
+            meta_head_lr = meta_head_lr_va
 
         print(f"\n{'='*60}\nREPTILE-ST META-TRAINING {lt.upper()}\n{'='*60}")
         set_all_seeds(SEED)
         base = _reptile_train(lt, df, splits, train_ps, cfg, device, output_dir,
-                              meta_lr=meta_lr, inner_lr=inner_lr,
+                              meta_lr=meta_lr, meta_head_lr=meta_head_lr,
+                              inner_lr=inner_lr,
                               l2_shared=l2_s, l2_task=l2_t,
                               balanced_k_per_class=K_PER_CLASS)
 
@@ -297,9 +292,11 @@ if __name__ == '__main__':
     final = {
         'train_participants': train_ps, 'test_participants': test_ps,
         'best_hyperparameters': {
-            'AR': {'meta_lr': best_meta_lr_ar, 'inner_lr': best_inner_lr_ar,
+            'AR': {'meta_lr': best_meta_lr_ar, 'meta_head_lr': meta_head_lr_ar,
+                   'inner_lr': best_inner_lr_ar,
                    'l2_shared': best_l2s_ar, 'l2_task': best_l2t_ar},
-            'VA': {'meta_lr': best_meta_lr_va, 'inner_lr': best_inner_lr_va,
+            'VA': {'meta_lr': best_meta_lr_va, 'meta_head_lr': meta_head_lr_va,
+                   'inner_lr': best_inner_lr_va,
                    'l2_shared': best_l2s_va, 'l2_task': best_l2t_va}},
         'k_per_class': K_PER_CLASS,
         **{f'ar_{k}': agg[f'ar_{k}'] for k in ['acc','precision','recall','f1','auc']},
