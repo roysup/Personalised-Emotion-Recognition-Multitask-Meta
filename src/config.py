@@ -263,7 +263,7 @@ _DATASET_REGISTRY = {
         'reptile_l2_task_va':     1e-4,
         'reptile_meta_steps_va':  200,
         'meta_head_lr_ar': 1.0,
-'meta_head_lr_va': 1.0,
+        'meta_head_lr_va': 1.0,
     },
         
      'dssn_em': {
@@ -303,7 +303,7 @@ _DATASET_REGISTRY = {
         'reptile_l2_task_va':     1e-5,
         'reptile_meta_steps_va':  200,
         'meta_head_lr_ar': 1.0,
-'meta_head_lr_va': 1.0,
+        'meta_head_lr_va': 1.0,
         },
      }
 
