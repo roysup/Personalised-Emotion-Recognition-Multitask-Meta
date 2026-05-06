@@ -6,11 +6,6 @@ matrix per training batch. Saves the mean matrix across all batches plus
 per-participant affinity scores, alongside the standard MTL evaluation
 artefacts so this is a complete experiment, not a probe-only side-run.
 
-The probe reuses the main training optimizer with full save/restore around
-each probe step, so the temporary Adam update inherits the accumulated
-moments from training. Probes run BEFORE each training step, measuring
-affinities at the current base parameters theta_t.
-
 Outputs (results/{prefix}_TAG/{prefix}_tag_results/):
     {ar,va}_final_affinity_matrix.npy
     affinity_scores_per_participant.csv
@@ -56,12 +51,7 @@ def parse_args():
 
 def _train_with_affinity(label_type, lr_shared, lr_task, l2_task,
                          train_data, cfg, device, output_dir):
-    """Train one MTL model (AR or VA) while collecting per-batch affinity.
-
-    The affinity probe reuses the main training optimizer (saving/restoring
-    its state around each probe) so the temporary update inherits the
-    accumulated Adam moments. Probes run BEFORE each training step.
-    """
+    """Train one MTL model (AR or VA) while collecting per-batch affinity."""
     num_tasks = cfg['num_tasks']
 
     loader, _, _ = make_mtl_loader(
@@ -80,11 +70,15 @@ def _train_with_affinity(label_type, lr_shared, lr_task, l2_task,
     sched = optim.lr_scheduler.ReduceLROnPlateau(
         main_opt, mode='min', factor=0.1, patience=3)
 
+    # Separate optimizer for the probe — shared params only, same LR.
+    affinity_opt = optim.Adam(shared_params, lr=lr_shared)
+
     train_loss_fn    = nn.BCEWithLogitsLoss()
     affinity_loss_fn = nn.BCEWithLogitsLoss(reduction='none')
 
     best_loss = float('inf')
     ckpt = os.path.join(output_dir, f'best_model_{label_type}_tag.pt')
+
     affinity_storage = []
 
     for epoch in range(EPOCHS):
@@ -92,14 +86,6 @@ def _train_with_affinity(label_type, lr_shared, lr_task, l2_task,
         running = 0.0
         for batch in loader:
             X_b, y_b, task_ids, _ = [b.to(device, non_blocking=True) for b in batch]
-
-            # Affinity probe BEFORE the real training update — measures
-            # affinities at the current base parameters theta_t.
-            aff = compute_inter_task_affinity(
-                model, X_b, y_b, task_ids,
-                main_opt, shared_params, task_params,
-                affinity_loss_fn, num_tasks)
-            affinity_storage.append(aff)
 
             # Standard training step
             main_opt.zero_grad(set_to_none=True)
@@ -111,6 +97,12 @@ def _train_with_affinity(label_type, lr_shared, lr_task, l2_task,
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_NORM)
             main_opt.step()
             running += total.item()
+
+            # Affinity probe (every batch)
+            aff = compute_inter_task_affinity(
+                model, X_b, y_b, task_ids,
+                affinity_opt, task_params, affinity_loss_fn, num_tasks)
+            affinity_storage.append(aff)
 
         avg = running / len(loader)
         sched.step(avg)
