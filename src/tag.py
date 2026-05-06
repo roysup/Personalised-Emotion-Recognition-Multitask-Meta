@@ -6,7 +6,10 @@ single gradient step on shared parameters using only u's loss, then measure
 the relative loss change on every other task v. Aggregating across batches
 gives an NxN affinity matrix where (u, v) = "training on u helps/hurts v".
 
-Designed to plug into MTLModel + make_mtl_loader directly.
+This implementation reuses the main training optimizer (with full save/restore
+around each probe step) so the temporary update inherits the accumulated Adam
+moments from training. Task-specific parameters are frozen during the probe
+by setting their grads to None so Adam skips them entirely.
 """
 import copy
 import numpy as np
@@ -14,21 +17,37 @@ import torch
 
 
 def compute_inter_task_affinity(model, X_batch, y_batch, task_ids_batch,
-                                affinity_optimizer, task_params, loss_fn,
-                                num_tasks):
+                                main_optimizer, shared_params, task_params,
+                                loss_fn, num_tasks):
     """
-    Compute one NxN affinity matrix from a single batch.
+    Adam-adapted TAG affinity computation.
+
+    For each source task u and target task v:
+        Z[u, v] = 1 - L_v(after temporary Adam update from u) / L_v(before update)
+
+    The probe reuses the main training optimizer so its update inherits the
+    accumulated Adam moments. Model and optimizer states are deep-copied and
+    restored around every probe so affinity extraction does not perturb the
+    real training trajectory. The model is kept in train() mode throughout
+    (with state restoration after each evaluation) to keep BatchNorm behaviour
+    consistent with training while preventing running-stat contamination.
+
+    `shared_params` is accepted for API symmetry with the caller but is not
+    used inside the function — only `task_params` are touched (their grads
+    are set to None so Adam skips them during the probe step).
 
     Parameters
     ----------
     model : MTLModel
     X_batch, y_batch, task_ids_batch : tensors already on device
-    affinity_optimizer : optim.Optimizer over SHARED params only — separate
-        from the main training optimizer so its state can be saved/restored
-        without disturbing training.
+    main_optimizer : optim.Optimizer
+        The training optimizer. Its state will be saved/restored around each
+        probe step so the probe inherits the accumulated Adam moments.
+    shared_params : list[nn.Parameter]
+        Shared backbone parameters (kept for API symmetry; not used here).
     task_params : list[nn.Parameter]
-        Task-specific parameters whose grads are zeroed before the probe step
-        (TAG rule: only shared params should move).
+        Task-specific parameters whose grads are set to None during the probe
+        step (TAG rule: only shared params should move).
     loss_fn : nn.Module with reduction='none'.
     num_tasks : int
 
@@ -38,56 +57,70 @@ def compute_inter_task_affinity(model, X_batch, y_batch, task_ids_batch,
     leave their rows/columns as zeros.
     """
     was_training = model.training
-    model.eval()
+    model.train()
 
-    unique_tasks = sorted(set(task_ids_batch.tolist()))
-    task_to_idx = {t: [] for t in unique_tasks}
-    for b, tid in enumerate(task_ids_batch.tolist()):
-        task_to_idx[tid].append(b)
+    task_ids_cpu = task_ids_batch.detach().cpu().tolist()
+    unique_tasks = sorted(set(task_ids_cpu))
+    task_to_indices = {t: [] for t in unique_tasks}
+    for bidx, tid in enumerate(task_ids_cpu):
+        task_to_indices[tid].append(bidx)
 
+    base_model_state     = copy.deepcopy(model.state_dict())
+    base_optimizer_state = copy.deepcopy(main_optimizer.state_dict())
+
+    # Old losses at base parameters.
     with torch.no_grad():
-        losses_old = loss_fn(model(X_batch, task_ids_batch),
-                             y_batch).squeeze(-1).cpu().numpy()
-    loss_old_per_task = {t: float(np.mean([losses_old[b] for b in idxs]))
-                         for t, idxs in task_to_idx.items()}
+        preds_old = model(X_batch, task_ids_batch)
+        losses_old_all = loss_fn(preds_old, y_batch).squeeze(-1).detach().cpu().numpy()
+    loss_old_per_task = {
+        t: float(np.mean([losses_old_all[b] for b in idxs]))
+        for t, idxs in task_to_indices.items()
+    }
 
-    aff = np.zeros((num_tasks, num_tasks), dtype=np.float32)
+    # Restore — BN running stats can shift even under no_grad in train mode.
+    model.load_state_dict(base_model_state)
+    main_optimizer.load_state_dict(base_optimizer_state)
+
+    affinity_matrix = np.zeros((num_tasks, num_tasks), dtype=np.float32)
 
     for u in unique_tasks:
-        saved_model = copy.deepcopy(model.state_dict())
-        saved_opt   = copy.deepcopy(affinity_optimizer.state_dict())
-
+        # Start every source-task probe from the exact same base model + Adam state.
+        model.load_state_dict(base_model_state)
+        main_optimizer.load_state_dict(base_optimizer_state)
         model.train()
-        affinity_optimizer.zero_grad()
+        main_optimizer.zero_grad(set_to_none=True)
 
-        idx_u = task_to_idx[u]
-        loss_u = loss_fn(model(X_batch[idx_u], task_ids_batch[idx_u]),
-                         y_batch[idx_u]).mean()
+        idxs_u = task_to_indices[u]
+        pred_u = model(X_batch[idxs_u], task_ids_batch[idxs_u])
+        loss_u = loss_fn(pred_u, y_batch[idxs_u]).mean()
         loss_u.backward()
 
-        # TAG rule: zero task-specific grads (defensive — affinity_optimizer
-        # only holds shared params, but keeps semantics explicit).
+        # Freeze task-specific params during the probe.
+        # grad=None (not zeros) makes Adam skip them entirely for this step.
         for p in task_params:
-            if p.grad is not None:
-                p.grad.zero_()
+            p.grad = None
 
-        affinity_optimizer.step()
+        main_optimizer.step()
 
-        model.eval()
+        # New losses after the temporary source-task update.
         with torch.no_grad():
-            losses_new = loss_fn(model(X_batch, task_ids_batch),
-                                 y_batch).squeeze(-1).cpu().numpy()
+            preds_new = model(X_batch, task_ids_batch)
+            losses_new_all = loss_fn(preds_new, y_batch).squeeze(-1).detach().cpu().numpy()
+        loss_new_per_task = {
+            t: float(np.mean([losses_new_all[b] for b in idxs]))
+            for t, idxs in task_to_indices.items()
+        }
 
         for v in unique_tasks:
-            old_v = loss_old_per_task[v]
-            new_v = float(np.mean([losses_new[b] for b in task_to_idx[v]]))
-            aff[u, v] = (1.0 - new_v / old_v) if old_v != 0.0 else 0.0
+            old = loss_old_per_task[v]
+            new = loss_new_per_task[v]
+            affinity_matrix[u, v] = 1.0 - new / old if old != 0.0 else 0.0
 
-        model.load_state_dict(saved_model)
-        affinity_optimizer.load_state_dict(saved_opt)
-
+    # Restore the real training trajectory exactly.
+    model.load_state_dict(base_model_state)
+    main_optimizer.load_state_dict(base_optimizer_state)
     model.train(was_training)
-    return aff
+    return affinity_matrix
 
 
 def extract_per_participant_scores(affinity_matrix, participant_ids):
