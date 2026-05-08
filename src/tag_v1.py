@@ -10,27 +10,6 @@ This implementation reuses the main training optimizer (with full save/restore
 around each probe step) so the temporary update inherits the accumulated Adam
 moments from training. Task-specific parameters are frozen during the probe
 by setting their grads to None so Adam skips them entirely.
-
-Save/restore subtlety
----------------------
-`torch.optim.Optimizer.load_state_dict` does NOT defensively copy the dict it
-receives — `self.state` ends up holding direct references to the tensors
-inside the argument. The next `optimizer.step()` then mutates those tensors
-in place (most visibly, Adam's `step` counter, which is a tensor in modern
-PyTorch). On the next `load_state_dict(saved)`, the "saved" state has been
-silently corrupted by the prior step, and the optimizer is restored to a
-state with the wrong `step` counter (and therefore wrong Adam bias correction).
-
-The fix: pass `copy.deepcopy(base_optimizer_state)` to every
-`main_optimizer.load_state_dict(...)` call, so the optimizer never aliases
-the canonical saved state and `base_optimizer_state` stays pristine across
-the probe loop. Without this, the probe leaks `+num_tasks_in_batch` step
-counts per batch into the real training trajectory, and TAG runs no longer
-match plain MTL-HPS bit-for-bit.
-
-Note that `Module.load_state_dict` (model side) does element-wise `.copy_()`
-into the existing parameter and buffer tensors, so the model state dict does
-not need this defensive deepcopy — only the optimizer side does.
 """
 import copy
 import numpy as np
@@ -56,9 +35,6 @@ def compute_inter_task_affinity(model, X_batch, y_batch, task_ids_batch,
     `shared_params` is accepted for API symmetry with the caller but is not
     used inside the function — only `task_params` are touched (their grads
     are set to None so Adam skips them during the probe step).
-
-    IMPORTANT: every `main_optimizer.load_state_dict(...)` call passes a fresh
-    `copy.deepcopy(base_optimizer_state)`. See the module docstring for why.
 
     Parameters
     ----------
@@ -102,16 +78,15 @@ def compute_inter_task_affinity(model, X_batch, y_batch, task_ids_batch,
     }
 
     # Restore — BN running stats can shift even under no_grad in train mode.
-    # Deepcopy the optimizer state on every load to keep base_optimizer_state pristine.
     model.load_state_dict(base_model_state)
-    main_optimizer.load_state_dict(copy.deepcopy(base_optimizer_state))
+    main_optimizer.load_state_dict(base_optimizer_state)
 
     affinity_matrix = np.zeros((num_tasks, num_tasks), dtype=np.float32)
 
     for u in unique_tasks:
         # Start every source-task probe from the exact same base model + Adam state.
         model.load_state_dict(base_model_state)
-        main_optimizer.load_state_dict(copy.deepcopy(base_optimizer_state))
+        main_optimizer.load_state_dict(base_optimizer_state)
         model.train()
         main_optimizer.zero_grad(set_to_none=True)
 
@@ -142,10 +117,8 @@ def compute_inter_task_affinity(model, X_batch, y_batch, task_ids_batch,
             affinity_matrix[u, v] = 1.0 - new / old if old != 0.0 else 0.0
 
     # Restore the real training trajectory exactly.
-    # Final deepcopy keeps base_optimizer_state safe in case the caller wants
-    # to reuse it (we don't, but defensive coding pays off here).
     model.load_state_dict(base_model_state)
-    main_optimizer.load_state_dict(copy.deepcopy(base_optimizer_state))
+    main_optimizer.load_state_dict(base_optimizer_state)
     model.train(was_training)
     return affinity_matrix
 
