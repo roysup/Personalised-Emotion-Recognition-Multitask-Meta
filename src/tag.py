@@ -28,10 +28,15 @@ Implementation choices, all matching the reference:
     to the saved reference. Works because the manual SGD step uses
     `param.data = param.data - lr * grad`, which creates a NEW tensor
     rather than mutating in place; the original tensor is preserved.
-  * BatchNorm running stats: we explicitly snapshot and restore them across
-    each probe (the reference does NOT do this — it lets BN stats shift
-    with each lookahead forward). Keeping this is strictly more careful
-    than the reference and avoids leaking BN drift into real training.
+  * BatchNorm running stats: we temporarily disable `track_running_stats`
+    on all BN modules for the duration of the probe. The model stays in
+    train() mode, so BN still normalizes with BATCH statistics (matching
+    reference lookahead behavior). Only the side-effect — the in-place
+    update of `running_mean` / `running_var` — is suppressed. This is
+    needed because the in-place BN buffer update during the probe forward
+    trips autograd's version check on `autograd.grad(..., retain_graph=True)`
+    under deterministic-algorithm mode, and would also pollute the real
+    training trajectory's BN stats with probe steps.
 
 Affinity formula:
     Z_{u->v} = (1 - L_v(after) / L_v(before)) / lr
@@ -47,37 +52,34 @@ data (paper Appendix B.4: "TAG acting on the training dataset will never
 group a task by itself"). Downstream `extract_per_participant_scores`
 excludes the diagonal, matching the reference's network selection logic.
 """
-import copy
 import numpy as np
 import torch
 
 
-def _snapshot_bn_stats(model):
-    """Return a list of (module, running_mean.clone(), running_var.clone(),
-    num_batches_tracked.clone()) for every BN-like module in the model.
-    Used to restore BN running stats after each probe forward."""
-    snaps = []
+_BN_TYPES = (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d,
+             torch.nn.BatchNorm3d, torch.nn.SyncBatchNorm)
+
+
+def _disable_bn_tracking(model):
+    """Temporarily set track_running_stats=False on all BN modules.
+    Returns a list of (module, prior_state) tuples for restoration.
+
+    With train mode preserved, BN keeps using batch statistics for
+    normalization. Only the running-stat update side-effect is suppressed,
+    so nothing in-place modifies `running_mean` / `running_var` during the
+    probe forward, which (a) avoids autograd version-counter errors and
+    (b) keeps the probe from polluting real training's BN stats."""
+    states = []
     for m in model.modules():
-        if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d,
-                          torch.nn.BatchNorm3d, torch.nn.SyncBatchNorm)):
-            snap = (
-                m,
-                m.running_mean.detach().clone() if m.running_mean is not None else None,
-                m.running_var.detach().clone() if m.running_var is not None else None,
-                m.num_batches_tracked.detach().clone() if m.num_batches_tracked is not None else None,
-            )
-            snaps.append(snap)
-    return snaps
+        if isinstance(m, _BN_TYPES):
+            states.append((m, m.track_running_stats))
+            m.track_running_stats = False
+    return states
 
 
-def _restore_bn_stats(snaps):
-    for m, rm, rv, nbt in snaps:
-        if rm is not None:
-            m.running_mean.copy_(rm)
-        if rv is not None:
-            m.running_var.copy_(rv)
-        if nbt is not None:
-            m.num_batches_tracked.copy_(nbt)
+def _restore_bn_tracking(states):
+    for m, was_tracking in states:
+        m.track_running_stats = was_tracking
 
 
 def compute_inter_task_affinity(model, X_batch, y_batch, task_ids_batch,
@@ -121,86 +123,90 @@ def compute_inter_task_affinity(model, X_batch, y_batch, task_ids_batch,
     was_training = model.training
     model.train()  # match reference: probe forward uses training BN/dropout
 
-    # Snapshot BN running stats so we can restore them after each probe.
-    bn_snapshot = _snapshot_bn_stats(model)
+    # Disable BN running-stat updates for the probe (see module docstring).
+    bn_tracking_state = _disable_bn_tracking(model)
 
-    # Bucket batch indices by task ID.
-    task_ids_cpu = task_ids_batch.detach().cpu().tolist()
-    unique_tasks = sorted(set(task_ids_cpu))
-    task_to_indices = {t: [] for t in unique_tasks}
-    for bidx, tid in enumerate(task_ids_cpu):
-        task_to_indices[tid].append(bidx)
+    try:
+        # Bucket batch indices by task ID.
+        task_ids_cpu = task_ids_batch.detach().cpu().tolist()
+        unique_tasks = sorted(set(task_ids_cpu))
+        task_to_indices = {t: [] for t in unique_tasks}
+        for bidx, tid in enumerate(task_ids_cpu):
+            task_to_indices[tid].append(bidx)
 
-    lr = main_optimizer.param_groups[0]['lr']
+        lr = main_optimizer.param_groups[0]['lr']
 
-    # ONE full-batch forward with grad enabled. All per-task losses are
-    # sliced from this single forward, so the gradient w.r.t. shared params
-    # backprops through the same multi-task BN context that a real training
-    # step would see.
-    preds_full = model(X_batch, task_ids_batch)
-    losses_per_sample = loss_fn(preds_full, y_batch).squeeze(-1)
+        # ONE full-batch forward with grad enabled. All per-task losses are
+        # sliced from this single forward, so the gradient w.r.t. shared
+        # params backprops through the same multi-task BN context that a
+        # real training step would see.
+        preds_full = model(X_batch, task_ids_batch)
+        losses_per_sample = loss_fn(preds_full, y_batch).squeeze(-1)
 
-    # Old per-task losses. Detached scalars; no grad needed for these.
-    losses_per_sample_np = losses_per_sample.detach().cpu().numpy()
-    loss_old_per_task = {
-        t: float(np.mean([losses_per_sample_np[b] for b in idxs]))
-        for t, idxs in task_to_indices.items()
-    }
-
-    affinity_matrix = np.zeros((num_tasks, num_tasks), dtype=np.float32)
-
-    for u in unique_tasks:
-        # Save references to current shared param tensors. These are aliases,
-        # not copies — but the manual SGD step below reassigns param.data to
-        # a NEW tensor (param.data = param.data - lr*grad), leaving the
-        # original tensor (referenced here) untouched.
-        init_weights = [p.data for p in shared_params]
-
-        # u's loss = mean of per-sample losses for u's slice. autograd.grad
-        # only computes grads for shared_params; retain_graph=True so
-        # subsequent iterations of this loop can reuse the forward graph.
-        idxs_u = task_to_indices[u]
-        loss_u = losses_per_sample[idxs_u].mean()
-        grads = torch.autograd.grad(loss_u, shared_params, retain_graph=True)
-
-        # Manual vanilla SGD step on shared params. No optimizer.step(),
-        # so no Adam moments are touched and no state aliasing can occur.
-        # If you use weight decay in training and want it reflected here
-        # (matching the reference's `grad += param * weight_decay`), uncomment
-        # the wd line and read wd from main_optimizer.param_groups[0].
-        with torch.no_grad():
-            for param, grad in zip(shared_params, grads):
-                # wd_term = main_optimizer.param_groups[0].get('weight_decay', 0.0) * param
-                # param.data = param.data - lr * (grad + wd_term)
-                param.data = param.data - lr * grad
-
-            # Forward FULL batch with the updated shared params. no_grad
-            # because we only need the loss values for the affinity ratio.
-            preds_new = model(X_batch, task_ids_batch)
-            losses_new_per_sample = loss_fn(preds_new, y_batch).squeeze(-1)
-            losses_new_np = losses_new_per_sample.detach().cpu().numpy()
-
-        loss_new_per_task = {
-            t: float(np.mean([losses_new_np[b] for b in idxs]))
+        # Old per-task losses. Detached scalars; no grad needed for these.
+        losses_per_sample_np = losses_per_sample.detach().cpu().numpy()
+        loss_old_per_task = {
+            t: float(np.mean([losses_per_sample_np[b] for b in idxs]))
             for t, idxs in task_to_indices.items()
         }
 
-        for v in unique_tasks:
-            old = loss_old_per_task[v]
-            new = loss_new_per_task[v]
-            if old != 0.0:
-                affinity_matrix[u, v] = (1.0 - new / old) / lr
-            else:
-                affinity_matrix[u, v] = 0.0
+        affinity_matrix = np.zeros((num_tasks, num_tasks), dtype=np.float32)
 
-        # Restore shared param tensors to their pre-probe values, and
-        # restore BN running stats so the second forward doesn't leak.
-        with torch.no_grad():
-            for param, init_weight in zip(shared_params, init_weights):
-                param.data = init_weight
-        _restore_bn_stats(bn_snapshot)
+        for u in unique_tasks:
+            # Save references to current shared param tensors. These are
+            # aliases, not copies — but the manual SGD step below reassigns
+            # param.data to a NEW tensor (param.data = param.data - lr*grad),
+            # leaving the original tensor (referenced here) untouched.
+            init_weights = [p.data for p in shared_params]
 
-    model.train(was_training)
+            # u's loss = mean of per-sample losses for u's slice.
+            # autograd.grad only computes grads for shared_params;
+            # retain_graph=True so subsequent iterations of this loop can
+            # reuse the forward graph.
+            idxs_u = task_to_indices[u]
+            loss_u = losses_per_sample[idxs_u].mean()
+            grads = torch.autograd.grad(loss_u, shared_params,
+                                        retain_graph=True)
+
+            # Manual vanilla SGD step on shared params. No optimizer.step(),
+            # so no Adam moments are touched and no state aliasing can occur.
+            with torch.no_grad():
+                for param, grad in zip(shared_params, grads):
+                    # wd_term = main_optimizer.param_groups[0].get('weight_decay', 0.0) * param
+                    # param.data = param.data - lr * (grad + wd_term)
+                    param.data = param.data - lr * grad
+
+                # Forward FULL batch with the updated shared params. no_grad
+                # because we only need the loss values for the affinity
+                # ratio.
+                preds_new = model(X_batch, task_ids_batch)
+                losses_new_per_sample = loss_fn(preds_new, y_batch).squeeze(-1)
+                losses_new_np = losses_new_per_sample.detach().cpu().numpy()
+
+            loss_new_per_task = {
+                t: float(np.mean([losses_new_np[b] for b in idxs]))
+                for t, idxs in task_to_indices.items()
+            }
+
+            for v in unique_tasks:
+                old = loss_old_per_task[v]
+                new = loss_new_per_task[v]
+                if old != 0.0:
+                    affinity_matrix[u, v] = (1.0 - new / old) / lr
+                else:
+                    affinity_matrix[u, v] = 0.0
+
+            # Restore shared param tensors to their pre-probe values.
+            with torch.no_grad():
+                for param, init_weight in zip(shared_params, init_weights):
+                    param.data = init_weight
+
+    finally:
+        # Always re-enable BN tracking and restore the original mode,
+        # even if the probe loop raised.
+        _restore_bn_tracking(bn_tracking_state)
+        model.train(was_training)
+
     return affinity_matrix
 
 
