@@ -102,7 +102,7 @@ def _train_with_affinity(label_type, lr_shared, lr_task, l2_task,
     #         affinity_storage.append(aff)
     
     
-    PROBE_EVERY = 10  # paper Section 5.2 Table 2: ~10x speedup, no quality loss
+    PROBE_EVERY = 1 #10  # paper Section 5.2 Table 2: ~10x speedup, no quality loss
     affinity_storage = []
     global_batch_idx = 0
 
