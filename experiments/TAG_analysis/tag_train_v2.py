@@ -85,26 +85,7 @@ def _train_with_affinity(label_type, lr_shared, lr_task, l2_task,
 
     best_loss = float('inf')
     ckpt = os.path.join(output_dir, f'best_model_{label_type}_tag.pt')
-    # affinity_storage = []
-
-    # for epoch in range(EPOCHS):
-    #     model.train()
-    #     running = 0.0
-    #     for batch in loader:
-    #         X_b, y_b, task_ids, _ = [b.to(device, non_blocking=True) for b in batch]
-
-    #         # Affinity probe BEFORE the real training update — measures
-    #         # affinities at the current base parameters theta_t.
-    #         aff = compute_inter_task_affinity(
-    #             model, X_b, y_b, task_ids,
-    #             main_opt, shared_params, task_params,
-    #             affinity_loss_fn, num_tasks)
-    #         affinity_storage.append(aff)
-    
-    
-    PROBE_EVERY = 10  # paper Section 5.2 Table 2: ~10x speedup, no quality loss
     affinity_storage = []
-    global_batch_idx = 0
 
     for epoch in range(EPOCHS):
         model.train()
@@ -112,16 +93,14 @@ def _train_with_affinity(label_type, lr_shared, lr_task, l2_task,
         for batch in loader:
             X_b, y_b, task_ids, _ = [b.to(device, non_blocking=True) for b in batch]
 
-            # Affinity probe every PROBE_EVERY batches, BEFORE the real
-            # training update — measures affinities at theta_t.
-            if global_batch_idx % PROBE_EVERY == 0:
-                aff = compute_inter_task_affinity(
-                    model, X_b, y_b, task_ids,
-                    main_opt, shared_params, task_params,
-                    affinity_loss_fn, num_tasks)
-                affinity_storage.append(aff)
-            global_batch_idx += 1
-            
+            # Affinity probe BEFORE the real training update — measures
+            # affinities at the current base parameters theta_t.
+            aff = compute_inter_task_affinity(
+                model, X_b, y_b, task_ids,
+                main_opt, shared_params, task_params,
+                affinity_loss_fn, num_tasks)
+            affinity_storage.append(aff)
+
             # Standard training step
             main_opt.zero_grad(set_to_none=True)
             loss  = train_loss_fn(model(X_b, task_ids), y_b)
