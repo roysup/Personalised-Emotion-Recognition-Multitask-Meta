@@ -192,7 +192,7 @@ def compute_inter_task_affinity(model, X_batch, y_batch, task_ids_batch,
                 old = loss_old_per_task[v]
                 new = loss_new_per_task[v]
                 if old != 0.0:
-                    affinity_matrix[u, v] = (1.0 - new / old) / lr
+                    affinity_matrix[u, v] = (1.0 - new / old) #/ lr
                 else:
                     affinity_matrix[u, v] = 0.0
 
