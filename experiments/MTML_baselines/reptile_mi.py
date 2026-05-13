@@ -42,7 +42,7 @@ def parse_args():
 # MI-GUIDED TASK EPISODES
 # ================================================================
 
-def _digitize_series(x, n_bins=18):
+def _digitize_series(x, n_bins=10):
     x = np.asarray(x).reshape(-1)
     if len(x) == 0:
         return np.zeros(1, dtype=int)
@@ -59,7 +59,7 @@ def _compute_task_mi_signature(task_df, label_type='ar', feature_cols=None):
 
     disc_cols = []
     for col in feature_cols:
-        disc_cols.append(_digitize_series(task_df[col].values, n_bins=18))
+        disc_cols.append(_digitize_series(task_df[col].values, n_bins=10))
 
     y_col = 'AR_Rating' if label_type == 'ar' else 'VA_Rating'
     y_disc = task_df[y_col].astype(int).values
