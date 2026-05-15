@@ -33,22 +33,40 @@ def parse_args():
     return p.parse_args()
 
 
+# COLORS = {
+#     'P-STL':       '#1f77b4',
+#     'STL':         '#2ca02c',
+#     'MTL':         '#d62728',
+#     'MTL+UW':      '#ff7f0e',
+#     'MTL+PCGrad':  '#9467bd',
+# }
+
 COLORS = {
-    'P-STL':       '#1f77b4',
-    'STL':         '#2ca02c',
-    'MTL':         '#d62728',
-    'MTL+UW':      '#ff7f0e',
-    'MTL+PCGrad':  '#9467bd',
+    'P-STL':       '#0072B2',  # blue
+    'STL':         '#009E73',  # green
+    'MTL':         '#D55E00',  # vermillion
+    #'MTL+UW':      '#CC79A7',  # reddish purple
+    #'MTL+PCGrad':  '#E69F00',  # orange
+    'MTL+UW':      '#5B5F97',  # slate gray-blue
+    'MTL+PCGrad':  '#8C564B',  # muted gray
 }
+
+
+# LINE_STYLES = {
+#     'P-STL':       ':',
+#     'STL':         '--',
+#     'MTL':         '-',
+#     'MTL+UW':      '-.',
+#     'MTL+PCGrad':  (0, (3, 1, 1, 1)),
+# }
 
 LINE_STYLES = {
-    'P-STL':       ':',
+    'P-STL':       '-',
     'STL':         '--',
-    'MTL':         '-',
-    'MTL+UW':      '-.',
-    'MTL+PCGrad':  (0, (3, 1, 1, 1)),
+    'MTL':         '-.',
+    'MTL+UW':      ':',
+    'MTL+PCGrad':  (0, (5, 2, 1, 2)),
 }
-
 
 def get_model_dirs(prefix):
     """Return dict of model name → result directory, parameterised by prefix."""
@@ -109,7 +127,7 @@ def compute_auc(data):
     return fpr, tpr, auc(fpr, tpr)
 
 
-def plot_roc(all_predictions, task, save_path, prefix):
+# def plot_roc(all_predictions, task, save_path, prefix):
     plt.figure(figsize=(10, 8))
     summary = []
 
@@ -141,6 +159,90 @@ def plot_roc(all_predictions, task, save_path, prefix):
     print(f'  ✓ Saved: {save_path}')
     return summary
 
+def plot_roc(all_predictions, task, save_path, prefix):
+    plt.rcParams.update({
+        'font.size': 12,
+        'axes.labelsize': 14,
+        'axes.titlesize': 16,
+        'xtick.labelsize': 11,
+        'ytick.labelsize': 11,
+        'legend.fontsize': 11,
+        'figure.dpi': 300,
+        'savefig.dpi': 300,
+        'axes.linewidth': 0.8
+    })
+
+    fig, ax = plt.subplots(figsize=(8, 7))
+    summary = []
+
+    for model_name in COLORS:
+        pred = all_predictions.get(model_name, {}).get(task.lower())
+        fpr, tpr, roc_auc = compute_auc(pred)
+
+        if fpr is None:
+            print(f'  Skipping {model_name} {task} (no valid data)')
+            continue
+
+        ax.plot(
+            fpr,
+            tpr,
+            label=f'{model_name} (AUC = {roc_auc:.3f})',
+            color=COLORS[model_name],
+            linestyle=LINE_STYLES[model_name],
+            linewidth=2.2
+        )
+
+        print(f'  {model_name} {task} AUC: {roc_auc:.4f}')
+
+        summary.append({
+            'Model': model_name,
+            'AUC': roc_auc,
+            'N': len(pred['y_true'])
+        })
+
+    ax.plot(
+        [0, 1],
+        [0, 1],
+        color='black',
+        linestyle='--',
+        linewidth=1.0,
+        label='Random classifier'
+    )
+
+    task_full = 'Arousal' if task == 'AR' else 'Valence'
+
+    ax.set_xlabel('False Positive Rate')
+    ax.set_ylabel('True Positive Rate')
+
+    ax.set_title(
+        f'ROC Curves for {task_full} Classification ({prefix})',
+        fontweight='bold'
+    )
+
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.02])
+
+    ax.grid(
+        True,
+        linestyle=':',
+        linewidth=0.7,
+        alpha=0.5
+    )
+
+    ax.legend(
+        loc='lower right',
+        frameon=False
+    )
+
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    fig.tight_layout()
+    fig.savefig(save_path, bbox_inches='tight')
+    plt.show()
+
+    print(f'  ✓ Saved: {save_path}')
+    return summary
 
 if __name__ == '__main__':
     args = parse_args()

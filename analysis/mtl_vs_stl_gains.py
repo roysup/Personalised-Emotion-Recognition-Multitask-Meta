@@ -399,7 +399,7 @@ if __name__ == '__main__':
 
     plot_file = os.path.join(
         RESULTS_DIR,
-        f'{prefix}_mtl_vs_stl_gains_publication.png'
+        f'{prefix}_mtl_vs_stl_gains.png'
     )
 
     fig.savefig(plot_file, bbox_inches='tight')
