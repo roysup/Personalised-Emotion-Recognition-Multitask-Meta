@@ -74,7 +74,8 @@ def _train_uw(label_type, lr_shared, lr_task, lr_logvar,
             per_sample_loss = loss_fn(model(X_b, task_ids), y_b).squeeze(-1)
             log_vars        = model.log_vars[task_ids]
             precision       = torch.exp(-log_vars)
-            weighted_loss   = (precision * per_sample_loss + log_vars).mean()
+            #weighted_loss   = (precision * per_sample_loss + log_vars).mean()
+            weighted_loss   = (precision * per_sample_loss + 0.5 * log_vars).mean()
             total           = weighted_loss + model.compute_l2(L2_SHARED, L2_TASK)
 
             if torch.isnan(total):
