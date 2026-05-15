@@ -33,12 +33,28 @@ def parse_args():
     return p.parse_args()
 
 
+COLORS = {
+    'P-STL':       '#1f77b4',
+    'STL':         '#2ca02c',
+    'MTL':         '#d62728',
+    'MTL+UW':      '#ff7f0e',
+    'MTL+PCGrad':  '#9467bd',
+}
+
 # COLORS = {
 #     'P-STL':       '#1f77b4',
 #     'STL':         '#2ca02c',
 #     'MTL':         '#d62728',
-#     'MTL+UW':      '#ff7f0e',
+#     'MTL+UW':      "#8E3B46",   
 #     'MTL+PCGrad':  '#9467bd',
+# }
+
+# COLORS = {
+#     'P-STL':       '#0072B2',
+#     'STL':         '#009E73',
+#     'MTL':         '#D55E00',
+#     'MTL+UW':      '#8E3B46',
+#     'MTL+PCGrad':  '#8C564B',
 # }
 
 # COLORS = {
@@ -51,29 +67,29 @@ def parse_args():
 #     'MTL+PCGrad':  '#8C564B',  # muted gray
 # }
 
-COLORS = {
-    'P-STL':       '#0072B2',  # blue
-    'STL':         '#009E73',  # green
-    'MTL':         '#D55E00',  # vermillion
-    'MTL+UW':      '#6A3D9A',  # deep purple
-    'MTL+PCGrad':  '#4D4D4D',  # dark gray
-}
-
-# LINE_STYLES = {
-#     'P-STL':       ':',
-#     'STL':         '--',
-#     'MTL':         '-',
-#     'MTL+UW':      '-.',
-#     'MTL+PCGrad':  (0, (3, 1, 1, 1)),
+# COLORS = {
+#     'P-STL':       '#0072B2',  # blue
+#     'STL':         '#009E73',  # green
+#     'MTL':         '#D55E00',  # vermillion
+#     'MTL+UW':      '#6A3D9A',  # deep purple
+#     'MTL+PCGrad':  '#4D4D4D',  # dark gray
 # }
 
 LINE_STYLES = {
-    'P-STL':       '-',
+    'P-STL':       ':',
     'STL':         '--',
-    'MTL':         '-.',
-    'MTL+UW':      ':',
-    'MTL+PCGrad':  (0, (5, 2, 1, 2)),
+    'MTL':         '-',
+    'MTL+UW':      '-.',
+    'MTL+PCGrad':  (0, (3, 1, 1, 1)),
 }
+
+# LINE_STYLES = {
+#     'P-STL':       '-',
+#     'STL':         '--',
+#     'MTL':         '-.',
+#     'MTL+UW':      ':',
+#     'MTL+PCGrad':  (0, (5, 2, 1, 2)),
+# }
 
 def get_model_dirs(prefix):
     """Return dict of model name → result directory, parameterised by prefix."""
