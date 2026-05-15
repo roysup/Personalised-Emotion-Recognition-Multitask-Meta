@@ -41,16 +41,23 @@ def parse_args():
 #     'MTL+PCGrad':  '#9467bd',
 # }
 
+# COLORS = {
+#     'P-STL':       '#0072B2',  # blue
+#     'STL':         '#009E73',  # green
+#     'MTL':         '#D55E00',  # vermillion
+#     #'MTL+UW':      '#CC79A7',  # reddish purple
+#     #'MTL+PCGrad':  '#E69F00',  # orange
+#     'MTL+UW':      '#5B5F97',  # slate gray-blue
+#     'MTL+PCGrad':  '#8C564B',  # muted gray
+# }
+
 COLORS = {
     'P-STL':       '#0072B2',  # blue
     'STL':         '#009E73',  # green
     'MTL':         '#D55E00',  # vermillion
-    #'MTL+UW':      '#CC79A7',  # reddish purple
-    #'MTL+PCGrad':  '#E69F00',  # orange
-    'MTL+UW':      '#5B5F97',  # slate gray-blue
-    'MTL+PCGrad':  '#8C564B',  # muted gray
+    'MTL+UW':      '#6A3D9A',  # deep purple
+    'MTL+PCGrad':  '#4D4D4D',  # dark gray
 }
-
 
 # LINE_STYLES = {
 #     'P-STL':       ':',
