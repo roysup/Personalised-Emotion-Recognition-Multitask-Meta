@@ -49,7 +49,7 @@ L2_LAMBDA     = 1e-5   # alias used by pstl.py
 # lower-variance per-user gradients and a less noisy inter-task affinity
 # estimate, at the cost of more correlated within-user samples. Recommended
 # range 4-8; 1 reproduces all original results exactly.
-WINDOWS_PER_USER = 8
+WINDOWS_PER_USER = 1
 
 # =============================
 # META-LEARNING SUPPORT-SET RESAMPLING
