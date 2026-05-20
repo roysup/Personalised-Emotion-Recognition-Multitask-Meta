@@ -67,6 +67,11 @@ def parse_args():
     p.add_argument('--uw', action='store_true',
                    help='Use per-episode uncertainty weighting over the K users '
                         '(Kendall et al.). Default: plain mean.')
+    p.add_argument('--cobatch', action='store_true',
+                   help='Co-batched joint: forward all episode users through the '
+                        'backbone in a SINGLE pass (mixed BatchNorm, faithful to '
+                        'MTL-HPS), then route per-user heads. Default: per-user '
+                        'forwards (per-user BatchNorm).')
     return p.parse_args()
 
 
@@ -150,7 +155,7 @@ def _materialize_support(sup_loader, device):
 
 def _adapt_episode_joint(episode_base, head_clones, user_batches, label_type,
                          inner_steps, inner_lr, device,
-                         l2_shared=0.0, l2_task=1e-5, use_uw=False):
+                         l2_shared=0.0, l2_task=1e-5, use_uw=False, cobatch=False):
     """
     Adapt episode_base IN PLACE jointly across all episode users.
 
@@ -165,6 +170,13 @@ def _adapt_episode_joint(episode_base, head_clones, user_batches, label_type,
     head_clones  : dict {pid: head clone} — one per episode user (mutated)
     user_batches : dict {pid: (X, y)} — each user's materialized support set
     use_uw       : if True, add per-episode Kendall uncertainty weighting
+    cobatch      : if True, forward ALL episode users through the backbone in a
+                   single concatenated pass (mixed BatchNorm statistics, faithful
+                   to real MTL-HPS joint training), then slice the shared features
+                   per user to each head. If False (default), each user gets its
+                   own backbone forward, so BatchNorm sees only that user's
+                   windows. Gradient flow to the shared backbone and per-user
+                   heads is identical either way; only the BN statistics differ.
 
     Returns
     -------
@@ -177,6 +189,12 @@ def _adapt_episode_joint(episode_base, head_clones, user_batches, label_type,
     pids = list(user_batches.keys())
     sp = list(episode_base.parameters())
     tp = [p for pid in pids for p in head_clones[pid].parameters()]
+
+    if cobatch:
+        # Concatenate every user's support windows for a single shared forward.
+        X_all  = torch.cat([user_batches[pid][0] for pid in pids], 0)
+        sizes  = [user_batches[pid][0].shape[0] for pid in pids]
+        bounds = np.cumsum([0] + sizes)
 
     params = sp + tp
     log_vars = None
@@ -192,9 +210,17 @@ def _adapt_episode_joint(episode_base, head_clones, user_batches, label_type,
     for step in range(inner_steps):
         opt.zero_grad(set_to_none=True)
         per_user_losses = []
-        for pid, (Xb, yb) in user_batches.items():
-            logit = head_clones[pid](episode_base(Xb))
-            per_user_losses.append(loss_fn(logit, yb))
+        if cobatch:
+            # ONE backbone forward over all users (mixed BN), then route per head.
+            feats_all = episode_base(X_all)
+            for i, pid in enumerate(pids):
+                s, e = int(bounds[i]), int(bounds[i + 1])
+                logit = head_clones[pid](feats_all[s:e])
+                per_user_losses.append(loss_fn(logit, user_batches[pid][1]))
+        else:
+            for pid, (Xb, yb) in user_batches.items():
+                logit = head_clones[pid](episode_base(Xb))
+                per_user_losses.append(loss_fn(logit, yb))
 
         losses = torch.stack(per_user_losses)            # (K,)
         if use_uw:
@@ -224,13 +250,14 @@ def _adapt_episode_joint(episode_base, head_clones, user_batches, label_type,
 def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
                    meta_lr, meta_head_lr, inner_lr, l2_shared, l2_task,
                    inner_steps, episode_size, meta_steps,
-                   balanced_k_per_class=None, use_uw=False):
+                   balanced_k_per_class=None, use_uw=False, cobatch=False):
     base  = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
     heads = {pid: TaskHead().to(device) for pid in train_ps}
     rng   = np.random.default_rng(SEED)
 
     print(f"  [{label_type.upper()}] JOINT episodes | "
-          f"{'UW-weighted' if use_uw else 'mean'} loss combination")
+          f"{'UW-weighted' if use_uw else 'mean'} loss combination | "
+          f"{'co-batched (mixed BN)' if cobatch else 'per-user forwards'}")
     if balanced_k_per_class is not None:
         print(f"  [{label_type.upper()}] Balanced k-shot: {balanced_k_per_class} per class")
     else:
@@ -266,7 +293,8 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
         head_clones = _adapt_episode_joint(
             episode_base, head_clones, user_batches, label_type,
             inner_steps, inner_lr, device,
-            l2_shared=l2_shared, l2_task=l2_task, use_uw=use_uw)
+            l2_shared=l2_shared, l2_task=l2_task, use_uw=use_uw,
+            cobatch=cobatch)
 
         # EMA-style update on persistent heads (1.0 = full replace)
         with torch.no_grad():
@@ -300,7 +328,7 @@ if __name__ == '__main__':
     train_ps = cfg['train_participants']
     test_ps  = cfg['test_participants']
 
-    suffix = '_uw' if args.uw else ''
+    suffix = ('_cobatch' if args.cobatch else '') + ('_uw' if args.uw else '')
     output_dir = os.path.join(RESULTS_DIR, f'{prefix}_MTML',
                               f'{prefix}_reptile_mt_joint{suffix}')
     os.makedirs(output_dir, exist_ok=True)
@@ -335,7 +363,7 @@ if __name__ == '__main__':
                               episode_size=hp['episode_size'],
                               meta_steps=hp['meta_steps'],
                               balanced_k_per_class=K_PER_CLASS,
-                              use_uw=args.uw)
+                              use_uw=args.uw, cobatch=args.cobatch)
 
         print(f"\n{'='*60}\nADAPT + EVAL {lt.upper()}\n{'='*60}")
         results = []
@@ -370,7 +398,7 @@ if __name__ == '__main__':
     ar_stds = compute_per_participant_stds(results_ar, 'ar')
     va_stds = compute_per_participant_stds(results_va, 'va')
     final = {
-        'variant': 'reptile_mt_joint', 'uw': args.uw,
+        'variant': 'reptile_mt_joint', 'uw': args.uw, 'cobatch': args.cobatch,
         'train_participants': train_ps, 'test_participants': test_ps,
         'best_hyperparameters': {'AR': hp_ar, 'VA': hp_va},
         'k_per_class': K_PER_CLASS,
