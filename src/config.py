@@ -60,7 +60,7 @@ WINDOWS_PER_USER = 1
 # set every episode, reproducing all original results exactly. Meta-TEST
 # adaptation always uses the fixed calibration support set regardless of this
 # flag, since deployment provides one fixed calibration set per unseen user.
-RESAMPLE_SUPPORT = False
+RESAMPLE_SUPPORT = True #False
 
 # =============================
 # UW LOG-VARIANCE LEARNING RATES
