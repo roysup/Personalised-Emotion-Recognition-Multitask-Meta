@@ -130,7 +130,8 @@ def _balanced_subsample_indices(y_target, k_per_class, rng,
 
 def build_support_query(task_df, support_trials, query_trials, ar_or_va='ar',
                         seed=42, window_size=2560, stride=1280,
-                        feature_cols=None, balanced_k_per_class=None):
+                        feature_cols=None, balanced_k_per_class=None,
+                        resample_seed=None):
     """
     Build support and query DataLoaders for meta-learning inner-loop adaptation.
 
@@ -147,6 +148,12 @@ def build_support_query(task_df, support_trials, query_trials, ar_or_va='ar',
     balanced_k_per_class : int or None — if set, subsample k windows per class
                            from the support set for balanced k-shot adaptation.
                            None means use all available support windows.
+    resample_seed        : int or None — episode index passed by meta-training.
+                           When config.RESAMPLE_SUPPORT is True, it perturbs the
+                           seed so each episode draws a fresh balanced support
+                           set (standard MAML/Reptile practice). None (the
+                           default, used at meta-test) keeps the fixed support
+                           set. With RESAMPLE_SUPPORT=False this has no effect.
 
     Returns
     -------
@@ -155,6 +162,17 @@ def build_support_query(task_df, support_trials, query_trials, ar_or_va='ar',
     if feature_cols is None:
         feature_cols = _DEFAULT_FEATURE_COLS
     n_channels = len(feature_cols)
+
+    # Opt-in per-episode support resampling: vary the seed by the episode index
+    # only when config.RESAMPLE_SUPPORT is set. Leaves seed unchanged otherwise,
+    # so the default reproduces the original fixed-support behaviour exactly.
+    if resample_seed is not None:
+        try:
+            from config import RESAMPLE_SUPPORT as _RESAMPLE
+        except Exception:
+            _RESAMPLE = False
+        if _RESAMPLE:
+            seed = int(seed) + int(resample_seed)
 
     rng = np.random.default_rng(seed)
 
@@ -202,37 +220,46 @@ def build_support_query(task_df, support_trials, query_trials, ar_or_va='ar',
 
 class BalancedSampler(Sampler):
     """
-    Ensures each batch contains exactly one sample per participant.
+    Ensures each batch contains exactly `windows_per_user` samples per participant.
     Uses a numpy Generator for deterministic, stateful shuffling across epochs.
+
+    windows_per_user = 1 reproduces the original behaviour exactly (one window
+    per participant per batch). windows_per_user = k packs k windows per
+    participant into each batch; the number of batches per epoch is reduced to
+    ceil(max_windows / k) so the per-epoch data volume stays roughly constant.
     """
 
-    def __init__(self, task_ids, present_task_ids, samples_per_task, seed=None):
+    def __init__(self, task_ids, present_task_ids, samples_per_task, seed=None,
+                 windows_per_user=1):
+        self.k             = max(1, int(windows_per_user))
         self.present_tasks = sorted(set(present_task_ids))
         self.num_tasks     = len(self.present_tasks)
-        self.num_batches   = max(samples_per_task[t] for t in self.present_tasks)
+        max_windows        = max(samples_per_task[t] for t in self.present_tasks)
+        self.num_batches   = max(1, int(np.ceil(max_windows / self.k)))
         self.rng           = np.random.default_rng(seed)
         self.task_indices  = {t: np.where(task_ids == t)[0] for t in self.present_tasks}
 
     def __iter__(self):
-        indices = []
+        k, nb = self.k, self.num_batches
+        per_task = {}
         for t in self.present_tasks:
             idx = self.task_indices[t]
-            if len(idx) < self.num_batches:
-                sampled = self.rng.choice(idx, size=self.num_batches, replace=True)
+            total = k * nb
+            if len(idx) < total:
+                sampled = self.rng.choice(idx, size=total, replace=True)
             else:
-                sampled = self.rng.permutation(idx)[:self.num_batches]
-            indices.append(sampled)
+                sampled = self.rng.permutation(idx)[:total]
+            per_task[t] = np.asarray(sampled).reshape(nb, k)
 
-        indices     = np.array(indices).T.flatten()
-        batch_order = self.rng.permutation(self.num_batches)
-
+        batch_order = self.rng.permutation(nb)
         shuffled = []
         for b in batch_order:
-            shuffled.extend(indices[b * self.num_tasks: (b + 1) * self.num_tasks])
+            for t in self.present_tasks:
+                shuffled.extend(per_task[t][b].tolist())
         return iter(shuffled)
 
     def __len__(self):
-        return self.num_batches * self.num_tasks
+        return self.num_batches * self.num_tasks * self.k
 
 
 # =============================
@@ -240,14 +267,28 @@ class BalancedSampler(Sampler):
 # =============================
 
 def make_mtl_loader(tasks_dict, window_size, stride,
-                    label_type, batch_size, seed, feature_cols=None):
+                    label_type, batch_size, seed, feature_cols=None,
+                    windows_per_user=None):
     """
     Combine all participants into one dataset with a BalancedSampler.
+
+    windows_per_user : int or None
+        Windows drawn per participant per batch. If None, falls back to
+        config.WINDOWS_PER_USER (default 1). With k>1 the effective batch size
+        is k * num_present_participants so each batch holds k windows per user;
+        k=1 reproduces the original one-window-per-user behaviour exactly.
 
     Returns
     -------
     loader, total_samples, sampler
     """
+    if windows_per_user is None:
+        try:
+            from config import WINDOWS_PER_USER as _WPU
+            windows_per_user = _WPU
+        except Exception:
+            windows_per_user = 1
+    windows_per_user = max(1, int(windows_per_user))
     all_X, all_y, all_task_ids, all_trial_ids = [], [], [], []
     samples_per_task = {}
 
@@ -278,7 +319,13 @@ def make_mtl_loader(tasks_dict, window_size, stride,
 
     dataset = TensorDataset(X_t, y_t, tids_t, trids_t)
     sampler = BalancedSampler(all_task_ids, list(samples_per_task.keys()),
-                              samples_per_task, seed=seed)
+                              samples_per_task, seed=seed,
+                              windows_per_user=windows_per_user)
+    # Each batch must hold windows_per_user windows from every present task, so
+    # for k>1 the batch size is fixed by the sampler layout. k=1 keeps the
+    # caller-supplied batch_size (== num_participants) for exact reproducibility.
+    if windows_per_user > 1:
+        batch_size = windows_per_user * len(samples_per_task)
     pin = torch.cuda.is_available()
     loader  = DataLoader(dataset, batch_size=batch_size,
                          sampler=sampler, num_workers=0, pin_memory=pin)

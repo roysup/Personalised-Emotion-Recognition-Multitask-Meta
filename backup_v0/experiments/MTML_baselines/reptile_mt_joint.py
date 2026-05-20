@@ -250,8 +250,7 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
                 ar_or_va=label_type,
                 window_size=cfg['window_size'], stride=cfg['stride'],
                 feature_cols=cfg['feature_cols'],
-                balanced_k_per_class=balanced_k_per_class,
-                resample_seed=step)
+                balanced_k_per_class=balanced_k_per_class)
             sb = _materialize_support(sup_loader, device)
             if sb is not None:
                 user_batches[pid] = sb
