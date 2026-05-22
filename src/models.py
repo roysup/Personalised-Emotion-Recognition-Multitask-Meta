@@ -34,42 +34,83 @@ def _xavier_init(m):
 # MTL_baselines — single-task
 # ============================================================
 
+# class SingleTaskModel(nn.Module):
+#     """
+#     Single-task CNN+LSTM model used by pstl.py and stl.py.
+#     Input: (batch, n_channels, window_size) — permuted internally from (batch, window, channels).
+#     Output: (batch, 1) logit.
+
+#     Parameters
+#     ----------
+#     input_dim : int — number of input channels (default 2 for VREED: ECG + GSR)
+#     """
+#     def __init__(self, input_dim: int = 2):
+#         super().__init__()
+#         self.conv1  = nn.Conv1d(input_dim, 128, kernel_size=2, padding=0)
+#         self.bn1    = nn.BatchNorm1d(128)
+#         self.pool1  = nn.MaxPool1d(kernel_size=2, stride=2, padding=1)
+#         self.conv2  = nn.Conv1d(128, 64, kernel_size=1, padding=0)
+#         self.bn2    = nn.BatchNorm1d(64)
+#         self.pool2  = nn.MaxPool1d(kernel_size=2, stride=2)
+#         self.lstm   = nn.LSTM(64, 64, batch_first=True)
+#         self.dense1 = nn.Linear(64, 128)
+#         self.dense2 = nn.Linear(128, 64)
+#         self.out    = nn.Linear(64, 1)
+#         self.apply(_xavier_init)
+
+#     def forward(self, x):
+#         x = x.permute(0, 2, 1)
+#         x = F.relu(self.bn1(self.conv1(x))); x = self.pool1(x)
+#         x = F.relu(self.bn2(self.conv2(x))); x = self.pool2(x)
+#         x = x.permute(0, 2, 1)
+#         x, _ = self.lstm(x)
+#         x = torch.mean(x, dim=1)
+#         x = F.relu(self.dense1(x))
+#         x = F.relu(self.dense2(x))
+#         return self.out(x)
+
+
 class SingleTaskModel(nn.Module):
     """
-    Single-task CNN+LSTM model used by pstl.py and stl.py.
-    Input: (batch, n_channels, window_size) — permuted internally from (batch, window, channels).
+    Smaller single-task CNN+LSTM model used by pstl.py and stl.py.
+    Input: (batch, window, channels)
     Output: (batch, 1) logit.
-
-    Parameters
-    ----------
-    input_dim : int — number of input channels (default 2 for VREED: ECG + GSR)
     """
+
     def __init__(self, input_dim: int = 2):
         super().__init__()
-        self.conv1  = nn.Conv1d(input_dim, 128, kernel_size=2, padding=0)
-        self.bn1    = nn.BatchNorm1d(128)
-        self.pool1  = nn.MaxPool1d(kernel_size=2, stride=2, padding=1)
-        self.conv2  = nn.Conv1d(128, 64, kernel_size=1, padding=0)
-        self.bn2    = nn.BatchNorm1d(64)
-        self.pool2  = nn.MaxPool1d(kernel_size=2, stride=2)
-        self.lstm   = nn.LSTM(64, 64, batch_first=True)
-        self.dense1 = nn.Linear(64, 128)
-        self.dense2 = nn.Linear(128, 64)
-        self.out    = nn.Linear(64, 1)
+
+        # Shared feature extractor equivalent to revised MTL backbone
+        self.conv1 = nn.Conv1d(input_dim, 64, kernel_size=3, padding=1)
+        self.bn1   = nn.BatchNorm1d(64)
+        self.pool1 = nn.MaxPool1d(kernel_size=2, stride=2)
+
+        self.lstm = nn.LSTM(64, 32, batch_first=True)
+
+        # Smaller prediction head
+        self.dropout = nn.Dropout(p=0.2)
+        self.dense1  = nn.Linear(32, 64)
+        self.out     = nn.Linear(64, 1)
+
         self.apply(_xavier_init)
 
     def forward(self, x):
         x = x.permute(0, 2, 1)
-        x = F.relu(self.bn1(self.conv1(x))); x = self.pool1(x)
-        x = F.relu(self.bn2(self.conv2(x))); x = self.pool2(x)
+
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = self.pool1(x)
+
         x = x.permute(0, 2, 1)
+
         x, _ = self.lstm(x)
+
         x = torch.mean(x, dim=1)
+
         x = F.relu(self.dense1(x))
-        x = F.relu(self.dense2(x))
+        x = self.dropout(x)
+
         return self.out(x)
-
-
+    
 # ============================================================
 # MTL_baselines — multi-task
 # ============================================================
