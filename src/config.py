@@ -22,7 +22,7 @@ WINDOW_SIZE = 2560
 STRIDE      = 1280
 N_FOLDS     = 5
 MAX_NORM    = 1.0
-EPOCHS      = 30
+EPOCHS      = 40 #30
 
 # =============================
 # BATCH SIZES
