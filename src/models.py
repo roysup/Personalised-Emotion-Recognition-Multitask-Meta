@@ -74,6 +74,76 @@ class SingleTaskModel(nn.Module):
 # MTL_baselines — multi-task
 # ============================================================
 
+# class MTLModel(nn.Module):
+#     """
+#     Shared CNN+LSTM backbone with per-participant dense output heads.
+#     Used by mtl_hps.py and mtl_pcgrad.py.
+
+#     Parameters
+#     ----------
+#     num_tasks : int — number of participants
+#     input_dim : int — number of input channels (default 2)
+#     """
+#     def __init__(self, num_tasks: int, input_dim: int = 2):
+#         super().__init__()
+#         self.num_tasks = num_tasks
+
+#         # Shared layers
+#         self.conv1 = nn.Conv1d(input_dim, 128, kernel_size=2, padding=0)
+#         self.bn1   = nn.BatchNorm1d(128)
+#         self.pool1 = nn.MaxPool1d(kernel_size=2, stride=2, padding=1)
+#         self.conv2 = nn.Conv1d(128, 64, kernel_size=1, padding=0)
+#         self.bn2   = nn.BatchNorm1d(64)
+#         self.pool2 = nn.MaxPool1d(kernel_size=2, stride=2)
+#         self.lstm  = nn.LSTM(64, 64, batch_first=True)
+
+#         # Task-specific heads
+#         self.task_dense1 = nn.ModuleList([nn.Linear(64, 128) for _ in range(num_tasks)])
+#         self.task_dense2 = nn.ModuleList([nn.Linear(128, 64) for _ in range(num_tasks)])
+#         self.task_out    = nn.ModuleList([nn.Linear(64, 1)   for _ in range(num_tasks)])
+
+#         self.apply(_xavier_init)
+
+#     def shared_forward(self, x):
+#         x = x.permute(0, 2, 1)
+#         x = F.relu(self.bn1(self.conv1(x))); x = self.pool1(x)
+#         x = F.relu(self.bn2(self.conv2(x))); x = self.pool2(x)
+#         x = x.permute(0, 2, 1)
+#         x, _ = self.lstm(x)
+#         return torch.mean(x, dim=1)
+
+#     def forward(self, x, task_ids):
+#         shared  = self.shared_forward(x)
+#         outputs = torch.zeros(len(x), 1, device=x.device)
+#         for t in torch.unique(task_ids):
+#             t    = t.item()
+#             mask = (task_ids == t)
+#             h    = F.relu(self.task_dense1[t](shared[mask]))
+#             h    = F.relu(self.task_dense2[t](h))
+#             outputs[mask] = self.task_out[t](h)
+#         return outputs
+
+#     def shared_parameters(self):
+#         return (list(self.conv1.parameters()) + list(self.bn1.parameters()) +
+#                 list(self.conv2.parameters()) + list(self.bn2.parameters()) +
+#                 list(self.lstm.parameters()))
+
+#     def task_specific_parameters(self):
+#         return (list(self.task_dense1.parameters()) +
+#                 list(self.task_dense2.parameters()) +
+#                 list(self.task_out.parameters()))
+
+#     def compute_l2(self, l2_shared: float = 0.0, l2_task: float = 1e-5) -> torch.Tensor:
+#         ls = l2_shared * sum(p.norm(2) ** 2
+#                              #for p in self.shared_parameters() if p.requires_grad)
+#                              for p in self.shared_parameters() if p.requires_grad and p.ndim >= 2)
+
+#         lt = l2_task   * sum(p.norm(2) ** 2
+#                              #for p in self.task_specific_parameters() if p.requires_grad)
+#                              for p in self.task_specific_parameters() if p.requires_grad and p.ndim >= 2)
+#         return ls + lt
+
+
 class MTLModel(nn.Module):
     """
     Shared CNN+LSTM backbone with per-participant dense output heads.
@@ -84,6 +154,7 @@ class MTLModel(nn.Module):
     num_tasks : int — number of participants
     input_dim : int — number of input channels (default 2)
     """
+
     def __init__(self, num_tasks: int, input_dim: int = 2):
         super().__init__()
         self.num_tasks = num_tasks
@@ -92,58 +163,107 @@ class MTLModel(nn.Module):
         self.conv1 = nn.Conv1d(input_dim, 128, kernel_size=2, padding=0)
         self.bn1   = nn.BatchNorm1d(128)
         self.pool1 = nn.MaxPool1d(kernel_size=2, stride=2, padding=1)
+
         self.conv2 = nn.Conv1d(128, 64, kernel_size=1, padding=0)
         self.bn2   = nn.BatchNorm1d(64)
         self.pool2 = nn.MaxPool1d(kernel_size=2, stride=2)
+
         self.lstm  = nn.LSTM(64, 64, batch_first=True)
 
+        # Dropout for task-specific heads
+        self.task_dropout = nn.Dropout(p=0.2)
+
         # Task-specific heads
-        self.task_dense1 = nn.ModuleList([nn.Linear(64, 128) for _ in range(num_tasks)])
-        self.task_dense2 = nn.ModuleList([nn.Linear(128, 64) for _ in range(num_tasks)])
-        self.task_out    = nn.ModuleList([nn.Linear(64, 1)   for _ in range(num_tasks)])
+        self.task_dense1 = nn.ModuleList([
+            nn.Linear(64, 128) for _ in range(num_tasks)
+        ])
+
+        self.task_dense2 = nn.ModuleList([
+            nn.Linear(128, 64) for _ in range(num_tasks)
+        ])
+
+        self.task_out = nn.ModuleList([
+            nn.Linear(64, 1) for _ in range(num_tasks)
+        ])
 
         self.apply(_xavier_init)
 
     def shared_forward(self, x):
+
         x = x.permute(0, 2, 1)
-        x = F.relu(self.bn1(self.conv1(x))); x = self.pool1(x)
-        x = F.relu(self.bn2(self.conv2(x))); x = self.pool2(x)
+
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = self.pool1(x)
+
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = self.pool2(x)
+
         x = x.permute(0, 2, 1)
+
         x, _ = self.lstm(x)
+
         return torch.mean(x, dim=1)
 
     def forward(self, x, task_ids):
-        shared  = self.shared_forward(x)
+
+        shared = self.shared_forward(x)
+
         outputs = torch.zeros(len(x), 1, device=x.device)
+
         for t in torch.unique(task_ids):
-            t    = t.item()
+
+            t = t.item()
             mask = (task_ids == t)
-            h    = F.relu(self.task_dense1[t](shared[mask]))
-            h    = F.relu(self.task_dense2[t](h))
+
+            h = F.relu(self.task_dense1[t](shared[mask]))
+
+            # Dropout after first dense layer
+            h = self.task_dropout(h)
+
+            h = F.relu(self.task_dense2[t](h))
+
             outputs[mask] = self.task_out[t](h)
+
         return outputs
 
     def shared_parameters(self):
-        return (list(self.conv1.parameters()) + list(self.bn1.parameters()) +
-                list(self.conv2.parameters()) + list(self.bn2.parameters()) +
-                list(self.lstm.parameters()))
+
+        return (
+            list(self.conv1.parameters()) +
+            list(self.bn1.parameters()) +
+            list(self.conv2.parameters()) +
+            list(self.bn2.parameters()) +
+            list(self.lstm.parameters())
+        )
 
     def task_specific_parameters(self):
-        return (list(self.task_dense1.parameters()) +
-                list(self.task_dense2.parameters()) +
-                list(self.task_out.parameters()))
 
-    def compute_l2(self, l2_shared: float = 0.0, l2_task: float = 1e-5) -> torch.Tensor:
-        ls = l2_shared * sum(p.norm(2) ** 2
-                             #for p in self.shared_parameters() if p.requires_grad)
-                             for p in self.shared_parameters() if p.requires_grad and p.ndim >= 2)
+        return (
+            list(self.task_dense1.parameters()) +
+            list(self.task_dense2.parameters()) +
+            list(self.task_out.parameters())
+        )
 
-        lt = l2_task   * sum(p.norm(2) ** 2
-                             #for p in self.task_specific_parameters() if p.requires_grad)
-                             for p in self.task_specific_parameters() if p.requires_grad and p.ndim >= 2)
+    def compute_l2(
+        self,
+        l2_shared: float = 0.0,
+        l2_task: float = 1e-5
+    ) -> torch.Tensor:
+
+        ls = l2_shared * sum(
+            p.norm(2) ** 2
+            for p in self.shared_parameters()
+            if p.requires_grad and p.ndim >= 2
+        )
+
+        lt = l2_task * sum(
+            p.norm(2) ** 2
+            for p in self.task_specific_parameters()
+            if p.requires_grad and p.ndim >= 2
+        )
+
         return ls + lt
-
-
+    
 class MTLModelUW(MTLModel):
     """
     MTLModel extended with per-task learnable log-uncertainty weights.
