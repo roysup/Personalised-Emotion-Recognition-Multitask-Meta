@@ -315,7 +315,7 @@ class MTLModel(nn.Module):
             mask = task_ids == t
 
             h = F.relu(self.task_dense1[t](shared[mask]))
-            h = self.task_dropout(h)
+            #h = self.task_dropout(h)
 
             outputs[mask] = self.task_out[t](h)
 
@@ -348,13 +348,6 @@ class MTLModel(nn.Module):
         )
 
         return ls + lt
-
-
-
-
-
-
-
 
 
 #-------------------------------------------------------------
