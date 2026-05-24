@@ -1,3 +1,5 @@
+import random
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -10,18 +12,36 @@ from utils import compute_metrics_from_cm
 # PCGRAD GRADIENT MODIFIER
 # =============================
 
-def _pcgrad_project(grad_list):
-    """Project gradients to remove conflicting components."""
-    grads = grad_list.copy()
-    for i in range(len(grads)):
-        for j in range(len(grads)):
-            if i == j:
-                continue
-            dot  = torch.dot(grads[i], grads[j])
-            denom = torch.dot(grads[j], grads[j])
+def _pcgrad_project(grad_list, reduction='mean'):
+    """Project gradients to remove conflicting components (PCGrad).
+
+    Faithful to Yu et al. 2020, "Gradient Surgery for Multi-Task Learning",
+    Algorithm 1: each task gradient g_i^PC is initialised from g_i and then
+    projected onto the *original* gradients g_j of the other tasks, visited
+    in random order, removing only conflicting (negative dot-product)
+    components.
+
+    Args:
+        grad_list: list of flat per-task gradient tensors.
+        reduction: 'sum' matches the paper's update (Algorithm 1, line 8);
+                   'mean' (default) preserves the prior 1/num_tasks scaling
+                   that the shared-param LR was tuned against.
+    """
+    orig = grad_list                          # pristine references g_j
+    pc   = [g.clone() for g in grad_list]     # g_i^PC <- g_i
+    num_tasks = len(grad_list)
+
+    for i in range(num_tasks):
+        order = [j for j in range(num_tasks) if j != i]
+        random.shuffle(order)                 # random task order (line 4)
+        for j in order:
+            dot   = torch.dot(pc[i], orig[j])     # g_i^PC . g_j (original g_j)
+            denom = torch.dot(orig[j], orig[j])
             if dot < 0 and denom > 0:
-                grads[i] = grads[i] - (dot / denom) * grads[j]
-    return torch.mean(torch.stack(grads), dim=0)
+                pc[i] = pc[i] - (dot / denom) * orig[j]
+
+    stacked = torch.stack(pc)
+    return stacked.sum(dim=0) if reduction == 'sum' else stacked.mean(dim=0)
 
 
 # =============================
