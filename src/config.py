@@ -280,7 +280,7 @@ _DATASET_REGISTRY = {
         'reptile_meta_lr_va':     0.01,
         'reptile_inner_lr_va':    1e-4,
         'reptile_inner_steps_va': 5,
-        'reptile_episode_size_va': 2,
+        'reptile_episode_size_va': 3, #2,
         'reptile_l2_shared_va':   1e-5,
         'reptile_l2_task_va':     1e-4,
         'reptile_meta_steps_va':  200,
