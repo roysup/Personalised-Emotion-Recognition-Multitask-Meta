@@ -41,7 +41,8 @@ def parse_args():
                         'balanced = anchor + similar/diverse split (default); '
                         'all_high = anchor + highest-MI only; '
                         'all_low = anchor + lowest-MI only; '
-                        'random = anchor + random others (no MI guidance).')
+                        'random = anchor + random others, no MI guidance '
+                        '(matched-pipeline control; same method as reptile_mt.py).')
     return p.parse_args()
 
 
@@ -148,7 +149,9 @@ def _composition_split(episode_size, mode='balanced'):
       all_high : every non-anchor slot filled with highest-MI tasks.
       all_low  : every non-anchor slot filled with lowest-MI tasks.
       random   : no MI guidance — (0, 0) leaves sample_mi_guided_episode to
-                 fill all non-anchor slots randomly from unused tasks.
+                 fill all non-anchor slots randomly from unused tasks. This is
+                 the same method as reptile_mt.py, kept here as a control that
+                 shares reptile_mi's exact pipeline (only composition differs).
 
     Episode size is left exactly as configured per dataset/label-type, so at
     episode_size = 3 the arms occupy only 2 slots and are correspondingly
