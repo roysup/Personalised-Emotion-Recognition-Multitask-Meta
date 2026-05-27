@@ -223,7 +223,7 @@ _DATASET_REGISTRY = {
         'reptile_meta_lr_ar':     0.03,
         'reptile_inner_lr_ar':    3e-4,
         'reptile_inner_steps_ar': 5,
-        'reptile_episode_size_ar': 5, #3,
+        'reptile_episode_size_ar': 3,
         'reptile_l2_shared_ar':   1e-5,
         'reptile_l2_task_ar':     1e-4,
         'reptile_meta_steps_ar':  200,
