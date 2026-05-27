@@ -41,6 +41,28 @@ L2_SHARED     = 0.0
 L2_LAMBDA     = 1e-5   # alias used by pstl.py
 
 # =============================
+# MTL BALANCED-BATCH COMPOSITION
+# =============================
+# Number of windows drawn per participant in each balanced MTL batch.
+# 1 = original behaviour (one window per user per batch); >1 packs k windows
+# per user per batch (effective batch size = k * num_participants), giving
+# lower-variance per-user gradients and a less noisy inter-task affinity
+# estimate, at the cost of more correlated within-user samples. Recommended
+# range 4-8; 1 reproduces all original results exactly.
+WINDOWS_PER_USER = 1
+
+# =============================
+# META-LEARNING SUPPORT-SET RESAMPLING
+# =============================
+# If True, each meta-training episode resamples a fresh balanced k-shot support
+# set per user (standard MAML/Reptile practice: the support draw varies across
+# episodes). If False (default), each user contributes the same fixed support
+# set every episode, reproducing all original results exactly. Meta-TEST
+# adaptation always uses the fixed calibration support set regardless of this
+# flag, since deployment provides one fixed calibration set per unseen user.
+RESAMPLE_SUPPORT = False
+
+# =============================
 # UW LOG-VARIANCE LEARNING RATES
 # =============================
 UW_LOG_VAR_LR_AR = 4e-3
@@ -258,7 +280,7 @@ _DATASET_REGISTRY = {
         'reptile_meta_lr_va':     0.01,
         'reptile_inner_lr_va':    1e-4,
         'reptile_inner_steps_va': 5,
-        'reptile_episode_size_va': 2,
+        'reptile_episode_size_va': 3, #2,
         'reptile_l2_shared_va':   1e-5,
         'reptile_l2_task_va':     1e-4,
         'reptile_meta_steps_va':  200,
