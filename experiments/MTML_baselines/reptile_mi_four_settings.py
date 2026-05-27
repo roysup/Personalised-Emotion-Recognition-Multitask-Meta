@@ -35,6 +35,14 @@ def parse_args():
     p = argparse.ArgumentParser(description='Reptile MI')
     p.add_argument('--dataset', type=str, default='vreed',
                    choices=['vreed', 'dssn_eq', 'dssn_em'])
+    p.add_argument('--composition', type=str, default='balanced',
+                   choices=['balanced', 'all_high', 'all_low', 'random'],
+                   help='MI episode composition ablation arm. '
+                        'balanced = anchor + similar/diverse split (default); '
+                        'all_high = anchor + highest-MI only; '
+                        'all_low = anchor + lowest-MI only; '
+                        'random = anchor + random others, no MI guidance '
+                        '(matched-pipeline control; same method as reptile_mt.py).')
     return p.parse_args()
 
 
@@ -132,12 +140,42 @@ def sample_mi_guided_episode(task_ids, mi_matrix, rng, episode_size=5,
     return selected[:episode_size]
 
 
-def _split_similar_diverse(episode_size):
-    """Split episode_size - 1 slots (after anchor) into similar + diverse."""
-    remaining = episode_size - 1
-    n_similar = remaining // 2
-    n_diverse = remaining - n_similar
+def _composition_split(episode_size, mode='balanced'):
+    """Map an ablation composition mode to (n_similar, n_diverse) for the
+    episode_size - 1 slots after the anchor.
+
+      balanced : split slots ~evenly between high-MI (similar) and low-MI
+                 (diverse) — the proposed method (current behaviour).
+      all_high : every non-anchor slot filled with highest-MI tasks.
+      all_low  : every non-anchor slot filled with lowest-MI tasks.
+      random   : no MI guidance — (0, 0) leaves sample_mi_guided_episode to
+                 fill all non-anchor slots randomly from unused tasks. This is
+                 the same method as reptile_mt.py, kept here as a control that
+                 shares reptile_mi's exact pipeline (only composition differs).
+
+    Episode size is left exactly as configured per dataset/label-type, so at
+    episode_size = 3 the arms occupy only 2 slots and are correspondingly
+    closer together.
+    """
+    remaining = max(0, episode_size - 1)
+    if mode == 'balanced':
+        n_similar = remaining // 2
+        n_diverse = remaining - n_similar
+    elif mode == 'all_high':
+        n_similar, n_diverse = remaining, 0
+    elif mode == 'all_low':
+        n_similar, n_diverse = 0, remaining
+    elif mode == 'random':
+        n_similar, n_diverse = 0, 0
+    else:
+        raise ValueError(f"Unknown composition mode: {mode!r}")
     return n_similar, n_diverse
+
+
+def _split_similar_diverse(episode_size):
+    """Split episode_size - 1 slots (after anchor) into similar + diverse.
+    Retained for backward compatibility; equivalent to the 'balanced' arm."""
+    return _composition_split(episode_size, mode='balanced')
 
 
 # ================================================================
@@ -184,7 +222,7 @@ def _adapt_episode_step(episode_base, head, sup_loader, ar_or_va,
 def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
                    meta_lr, meta_head_lr, inner_lr, l2_shared, l2_task,
                    meta_steps, inner_steps, episode_size,
-                   balanced_k_per_class=None):
+                   balanced_k_per_class=None, composition='balanced'):
     """Reptile-MI: MI-guided episodes, sequential adaptation, backbone-only outer update."""
     base  = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
     heads = {pid: TaskHead().to(device) for pid in train_ps}
@@ -198,13 +236,14 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
 
     task_ids = list(train_ps)
     eff_episode_size = min(episode_size, len(task_ids))
-    n_similar, n_diverse = _split_similar_diverse(eff_episode_size)
+    n_similar, n_diverse = _composition_split(eff_episode_size, composition)
 
     print(f"\n[FINAL-{label_type.upper()}] Meta-training on "
           f"{len(task_ids)} train participants")
     print(f"  META_STEPS={meta_steps}, META_LR={meta_lr}, "
           f"META_HEAD_LR={meta_head_lr}, "
           f"INNER_STEPS={inner_steps}, INNER_LR={inner_lr}")
+    print(f"  COMPOSITION={composition}")
     print(f"  EPISODE_SIZE={eff_episode_size} (n_similar={n_similar}, n_diverse={n_diverse})")
     print(f"  L2_SHARED={l2_shared}, L2_TASK={l2_task}")
 
@@ -271,7 +310,11 @@ if __name__ == '__main__':
     train_ps = cfg['train_participants']
     test_ps  = cfg['test_participants']
 
-    output_dir = os.path.join(RESULTS_DIR, f'{prefix}_MTML', f'{prefix}_reptile_mi')
+    # 'balanced' keeps the original path so existing results stay valid;
+    # ablation arms write to a suffixed dir so they never overwrite it.
+    mi_suffix = '' if args.composition == 'balanced' else f'_{args.composition}'
+    output_dir = os.path.join(RESULTS_DIR, f'{prefix}_MTML',
+                              f'{prefix}_reptile_mi{mi_suffix}')
     os.makedirs(output_dir, exist_ok=True)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -316,7 +359,8 @@ if __name__ == '__main__':
             l2_shared=h['l2_shared'], l2_task=h['l2_task'],
             meta_steps=h['meta_steps'], inner_steps=h['inner_steps'],
             episode_size=h['episode_size'],
-            balanced_k_per_class=K_PER_CLASS)
+            balanced_k_per_class=K_PER_CLASS,
+            composition=args.composition)
 
         print(f"\n{'='*60}\nADAPT + EVAL {lt.upper()}\n{'='*60}")
         results = []
