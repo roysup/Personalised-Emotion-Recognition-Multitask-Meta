@@ -60,7 +60,7 @@ WINDOWS_PER_USER = 1
 # set every episode, reproducing all original results exactly. Meta-TEST
 # adaptation always uses the fixed calibration support set regardless of this
 # flag, since deployment provides one fixed calibration set per unseen user.
-RESAMPLE_SUPPORT = True #False
+RESAMPLE_SUPPORT = False
 
 # =============================
 # UW LOG-VARIANCE LEARNING RATES
@@ -320,7 +320,7 @@ _DATASET_REGISTRY = {
         'reptile_meta_lr_va':     0.01,
         'reptile_inner_lr_va':    1e-3,
         'reptile_inner_steps_va': 10,
-        'reptile_episode_size_va': 3, #5,
+        'reptile_episode_size_va': 5,
         'reptile_l2_shared_va':   0.0,
         'reptile_l2_task_va':     1e-5,
         'reptile_meta_steps_va':  200,
