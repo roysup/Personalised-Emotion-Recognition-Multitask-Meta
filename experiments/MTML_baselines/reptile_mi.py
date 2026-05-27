@@ -233,7 +233,7 @@ def _reptile_train(label_type, df, splits, train_ps, cfg, device, output_dir,
                 ar_or_va=label_type,
                 window_size=cfg['window_size'], stride=cfg['stride'],
                 feature_cols=cfg['feature_cols'],
-                balanced_k_per_class=balanced_k_per_class) #,resample_seed=step)
+                balanced_k_per_class=balanced_k_per_class)
 
             adapted_head = _adapt_episode_step(
                 episode_base, heads[pid], sup_loader, label_type,
