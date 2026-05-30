@@ -1,22 +1,6 @@
 """
-TAG affinity analysis — post-hoc consolidation of per-participant affinity
+TAG affinity analysis - post-hoc consolidation of per-participant affinity
 scores against MTL vs STL gains.
-
-Reads:
-    results/{prefix}_TAG/{prefix}_tag_results/
-        {ar,va}_final_affinity_matrix.npy
-        affinity_scores_per_participant.csv
-    results/{prefix}_MTL_vs_STL_Gains.csv     (from mtl_vs_stl_gains.py)
-
-Produces affinity heatmaps, score distributions, and (when the gains CSV is
-present) affinity-vs-gain correlations with z-score outlier handling and a
-low/high STL-baseline rescue-effect comparison.
-
-Usage
------
-    python tag_analysis.py                  # VREED (default)
-    python tag_analysis.py --dataset dssn_eq
-    python tag_analysis.py --dataset dssn_em --z_threshold 2.5
 """
 import argparse
 import os, sys
@@ -46,16 +30,18 @@ def _plot_heatmaps(mat_ar, mat_va, p_ids, out_path):
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     for ax, mat, title in [(axes[0], mat_ar, 'AR Inter-Task Affinity'),
                            (axes[1], mat_va, 'VA Inter-Task Affinity')]:
-        v = np.percentile(np.abs(mat[np.isfinite(mat)]), 98)
+        mask = np.eye(mat.shape[0], dtype=bool)
+        off_diag = mat[~mask & np.isfinite(mat)]
+        v = np.percentile(np.abs(off_diag), 98)
         sns.heatmap(mat, annot=False, cmap='RdYlGn', center=0,
-                    vmin=-v, vmax=v,
+                    vmin=-v, vmax=v, mask=mask,
                     xticklabels=p_ids, yticklabels=p_ids, ax=ax)
         ax.set_title(title, fontsize=14, fontweight='bold')
         ax.set_xlabel('Participant ID (Target)')
         ax.set_ylabel('Participant ID (Source)')
     plt.tight_layout()
     plt.savefig(out_path, dpi=300); plt.close()
-    print(f"✓ {out_path}")
+    print(f"[OK] {out_path}")
 
 
 def _plot_distribution(scores_df, out_path):
@@ -72,7 +58,7 @@ def _plot_distribution(scores_df, out_path):
         ax.grid(axis='y', alpha=0.3); ax.legend()
     plt.tight_layout()
     plt.savefig(out_path, dpi=300); plt.close()
-    print(f"✓ {out_path}")
+    print(f"[OK] {out_path}")
 
 
 def _print_summary(scores_df):
@@ -105,43 +91,35 @@ def _correlation_block(merged, z_thr, out_path):
     def _z_outliers(df, score_col, gain_col):
         return (np.abs(zscore(df[score_col])) > z_thr) | \
                (np.abs(zscore(df[gain_col]))  > z_thr)
-
     ar_out = _z_outliers(merged, 'ar_affinity_score', 'AR_gain_%')
     va_out = _z_outliers(merged, 'va_affinity_score', 'VA_gain_%')
     ar_clean = merged[~ar_out]
     va_clean = merged[~va_out]
-
     def _corr(df, x, y):
         r,  pp = pearsonr(df[x], df[y])
         rh, ps = spearmanr(df[x], df[y])
         return r, pp, rh, ps
-
     ar_r,  ar_p,  ar_rho,  ar_ps  = _corr(merged,   'ar_affinity_score', 'AR_gain_%')
     va_r,  va_p,  va_rho,  va_ps  = _corr(merged,   'va_affinity_score', 'VA_gain_%')
     ar_rc, ar_pc, ar_rhoc, ar_psc = _corr(ar_clean, 'ar_affinity_score', 'AR_gain_%')
     va_rc, va_pc, va_rhoc, va_psc = _corr(va_clean, 'va_affinity_score', 'VA_gain_%')
-
     print("\nAffinity vs MTL gain (Pearson r, p):")
     print(f"  AR full      n={len(merged):2d}  r={ar_r:+.3f}  p={ar_p:.4f}")
     print(f"  AR z<{z_thr:.1f}  n={len(ar_clean):2d}  r={ar_rc:+.3f}  p={ar_pc:.4f}")
     print(f"  VA full      n={len(merged):2d}  r={va_r:+.3f}  p={va_p:.4f}")
     print(f"  VA z<{z_thr:.1f}  n={len(va_clean):2d}  r={va_rc:+.3f}  p={va_pc:.4f}")
-
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     _scatter_with_fit(axes[0,0], merged,   'ar_affinity_score', 'AR_gain_%',
-                      'steelblue', f'AR full (r={ar_r:+.3f}, p={ar_p:.4f})',
-                      outliers=ar_out)
+                      'steelblue', f'AR full (r={ar_r:+.3f}, p={ar_p:.4f})', outliers=ar_out)
     _scatter_with_fit(axes[0,1], ar_clean, 'ar_affinity_score', 'AR_gain_%',
                       'steelblue', f'AR z<{z_thr} (r={ar_rc:+.3f}, p={ar_pc:.4f})')
     _scatter_with_fit(axes[1,0], merged,   'va_affinity_score', 'VA_gain_%',
-                      'seagreen',  f'VA full (r={va_r:+.3f}, p={va_p:.4f})',
-                      outliers=va_out)
+                      'seagreen',  f'VA full (r={va_r:+.3f}, p={va_p:.4f})', outliers=va_out)
     _scatter_with_fit(axes[1,1], va_clean, 'va_affinity_score', 'VA_gain_%',
                       'seagreen',  f'VA z<{z_thr} (r={va_rc:+.3f}, p={va_pc:.4f})')
     plt.tight_layout()
     plt.savefig(out_path, dpi=300); plt.close()
-    print(f"✓ {out_path}")
-
+    print(f"[OK] {out_path}")
     return pd.DataFrame([
         {'group':'ar_full',  'n':len(merged),   'r':ar_r,  'p':ar_p,  'rho':ar_rho,  'p_spear':ar_ps},
         {'group':'ar_clean', 'n':len(ar_clean), 'r':ar_rc, 'p':ar_pc, 'rho':ar_rhoc, 'p_spear':ar_psc},
@@ -177,12 +155,11 @@ def _rescue_effect(merged, out_path):
             box.set_facecolor(color); box.set_alpha(0.6)
         ax.axhline(0, color='red', linestyle='--', linewidth=1)
         ax.set_ylabel(f'{label} gain (%)')
-        ax.set_title(f'{label}: gain by STL baseline group',
-                     fontsize=12, fontweight='bold')
+        ax.set_title(f'{label}: gain by STL baseline group', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3, axis='y')
     plt.tight_layout()
     plt.savefig(out_path, dpi=300); plt.close()
-    print(f"✓ {out_path}")
+    print(f"[OK] {out_path}")
     return pd.DataFrame(rows)
 
 
@@ -199,7 +176,7 @@ if __name__ == '__main__':
     }
     for name, path in paths.items():
         if not os.path.exists(path):
-            print(f"✗ Missing: {path}")
+            print(f"[X] Missing: {path}")
             print( "  Run experiments/TAG_analysis/tag_train.py for this dataset first.")
             sys.exit(1)
 
@@ -212,8 +189,7 @@ if __name__ == '__main__':
     p_ids     = scores_df['participant_id'].tolist()
 
     print(f"\nDataset: {prefix}")
-    print(f"AR matrix: {mat_ar.shape}, VA matrix: {mat_va.shape}, "
-          f"participants: {len(p_ids)}")
+    print(f"AR matrix: {mat_ar.shape}, VA matrix: {mat_va.shape}, participants: {len(p_ids)}")
 
     _plot_heatmaps(mat_ar, mat_va, p_ids,
                    os.path.join(out_dir, 'affinity_heatmaps.png'))
@@ -223,7 +199,7 @@ if __name__ == '__main__':
 
     gains_csv = os.path.join(RESULTS_DIR, f'{prefix}_MTL_vs_STL_Gains.csv')
     if not os.path.exists(gains_csv):
-        print(f"\n(Skipping gain correlation — {gains_csv} not found.")
+        print(f"\n(Skipping gain correlation - {gains_csv} not found.")
         print( " Run analysis/mtl_vs_stl_gains.py to enable this section.)")
         sys.exit(0)
 
@@ -234,11 +210,11 @@ if __name__ == '__main__':
         merged, args.z_threshold,
         os.path.join(out_dir, 'affinity_vs_gain_correlation.png'))
     corr_df.to_csv(os.path.join(out_dir, 'correlation_summary.csv'), index=False)
-    print(f"✓ {os.path.join(out_dir, 'correlation_summary.csv')}")
+    print(f"[OK] {os.path.join(out_dir, 'correlation_summary.csv')}")
 
     rescue_df = _rescue_effect(
         merged, os.path.join(out_dir, 'rescue_effect_by_stl_baseline.png'))
     rescue_df.to_csv(os.path.join(out_dir, 'rescue_effect_summary.csv'), index=False)
-    print(f"✓ {os.path.join(out_dir, 'rescue_effect_summary.csv')}")
+    print(f"[OK] {os.path.join(out_dir, 'rescue_effect_summary.csv')}")
 
     print("\nDone.")
