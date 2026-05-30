@@ -193,9 +193,9 @@ if __name__ == '__main__':
 
     tag_dir = os.path.join(RESULTS_DIR, f'{prefix}_TAG', f'{prefix}_tag_results')
     paths = {
-        'ar': os.path.join(tag_dir, 'ar_final_affinity_matrix.npy'),
-        'va': os.path.join(tag_dir, 'va_final_affinity_matrix.npy'),
-        'scores': os.path.join(tag_dir, 'affinity_scores_per_participant.csv'),
+        'ar': os.path.join(tag_dir, f'ar_final_affinity_matrix_{prefix}.npy'),
+        'va': os.path.join(tag_dir, f'va_final_affinity_matrix_{prefix}.npy'),
+        'scores': os.path.join(tag_dir, f'affinity_scores_per_participant_{prefix}.csv'),
     }
     for name, path in paths.items():
         if not os.path.exists(path):
