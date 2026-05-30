@@ -6,9 +6,12 @@ Comparison (paired across participants, two-sided Wilcoxon signed-rank):
                          fully personalized per-user STL baseline?
 
 Tested on per-participant ACCURACY across the 6 cells
-(3 datasets × 2 dimensions). Within this family of 6 tests, p-values
-are corrected with Holm. Effect size reported as rank-biserial
-correlation, computed directly from signed ranks.
+(3 datasets × 2 dimensions). No multiple-comparison correction is
+applied: AR and VA are conceptually distinct affective constructs
+(arousal vs valence) and each (dataset, dimension) is treated as an
+independent primary endpoint, not a redundant test of the same
+hypothesis. Effect size reported as rank-biserial correlation,
+computed directly from signed ranks.
 
 Inputs
 ------
@@ -18,8 +21,8 @@ results/{DATASET}_MTL/{DATASET}_{stl,hps}_results/per_participant_results.csv
 Outputs
 -------
 results/significance_tests.csv
-    One row per (dataset, dimension) with the raw and Holm-corrected
-    p-values, rank-biserial effect size, medians, and N.
+    One row per (dataset, dimension) with the p-value, rank-biserial
+    effect size, medians, and N.
 
 Usage
 -----
@@ -86,25 +89,6 @@ def _paired_wilcoxon(a, b):
     return n_eff, stat, p, rb
 
 
-def _holm(pvals):
-    """Holm step-down correction. NaNs are passed through."""
-    p = np.asarray(pvals, dtype=float)
-    out = np.full_like(p, np.nan)
-    mask = ~np.isnan(p)
-    if not mask.any():
-        return out
-    pm = p[mask]
-    order = np.argsort(pm)
-    m = len(pm)
-    adj = np.empty(m, dtype=float)
-    running = 0.0
-    for i, idx in enumerate(order):
-        running = max(running, (m - i) * pm[idx])
-        adj[idx] = min(1.0, running)
-    out[mask] = adj
-    return out
-
-
 # ----------------------------------------------------------------------
 # Comparison
 # ----------------------------------------------------------------------
@@ -139,24 +123,23 @@ def _run_mtl_hps_vs_stl():
                 'median_STL':     float(np.median(b)),
                 'median_diff':    float(np.median(a - b)),
                 'wilcoxon_W':     W,
-                'p_raw':          p,
+                'p_value':        p,
                 'rank_biserial':  rb,
                 'error':          '',
             })
 
     df = pd.DataFrame(rows)
-    df['p_holm'] = _holm(df['p_raw'].values) if 'p_raw' in df else np.nan
-    df['sig_holm_0.05'] = (df['p_holm'] < 0.05).where(df['p_holm'].notna(), '')
+    df['sig_0.05'] = (df['p_value'] < 0.05).where(df['p_value'].notna(), '')
     return df
 
 
 def _format_console(df):
-    if df.empty or 'p_raw' not in df.columns:
+    if df.empty or 'p_value' not in df.columns:
         return df.to_string(index=False)
     show = df.copy()
-    for c in ('p_raw', 'p_holm'):
-        if c in show:
-            show[c] = show[c].map(lambda v: f'{v:.4f}' if pd.notna(v) else '—')
+    if 'p_value' in show:
+        show['p_value'] = show['p_value'].map(
+            lambda v: f'{v:.4f}' if pd.notna(v) else '—')
     for c in show.columns:
         if c.startswith('median_') or c == 'rank_biserial':
             show[c] = show[c].map(lambda v: f'{v:+.4f}' if pd.notna(v) else '—')
@@ -166,7 +149,8 @@ def _format_console(df):
 if __name__ == '__main__':
     print('=' * 78)
     print('Paired Wilcoxon signed-rank test on per-participant accuracy')
-    print('MTL-HPS vs STL  —  Holm correction over the 6 (dataset x dim) cells')
+    print('MTL-HPS vs STL  —  no multiple-comparison correction')
+    print('(AR and VA are independent primary endpoints, not redundant tests)')
     print('=' * 78)
 
     df = _run_mtl_hps_vs_stl()
@@ -178,4 +162,4 @@ if __name__ == '__main__':
 
     print('\nInterpretation:')
     print('  rank_biserial > 0  -> MTL-HPS outperforms STL on most pairs')
-    print('  p_holm < 0.05      -> survives multiple-comparison correction')
+    print('  p_value < 0.05     -> significant at conventional threshold')
