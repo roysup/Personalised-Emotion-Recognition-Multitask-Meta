@@ -46,9 +46,7 @@ def _plot_heatmaps(mat_ar, mat_va, p_ids, out_path):
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     for ax, mat, title in [(axes[0], mat_ar, 'AR Inter-Task Affinity'),
                            (axes[1], mat_va, 'VA Inter-Task Affinity')]:
-        v = np.percentile(np.abs(mat[np.isfinite(mat)]), 98)
         sns.heatmap(mat, annot=False, cmap='RdYlGn', center=0,
-                    vmin=-v, vmax=v,
                     xticklabels=p_ids, yticklabels=p_ids, ax=ax)
         ax.set_title(title, fontsize=14, fontweight='bold')
         ax.set_xlabel('Participant ID (Target)')
