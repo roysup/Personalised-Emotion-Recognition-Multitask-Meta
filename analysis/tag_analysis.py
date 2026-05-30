@@ -32,7 +32,7 @@ def _plot_heatmaps(mat_ar, mat_va, p_ids, out_path):
                            (axes[1], mat_va, 'VA Inter-Task Affinity')]:
         mask = np.eye(mat.shape[0], dtype=bool)
         off_diag = mat[~mask & np.isfinite(mat)]
-        v = np.percentile(np.abs(off_diag), 98)
+        v = np.percentile(np.abs(off_diag), 99)
         sns.heatmap(mat, annot=False, cmap='RdYlGn', center=0,
                     vmin=-v, vmax=v, mask=mask,
                     xticklabels=p_ids, yticklabels=p_ids, ax=ax)
