@@ -54,6 +54,7 @@ MTML_SCRIPTS = [
     ('Reptile-ST',      '{p}_MTML/{p}_reptile_st',      'reptile_st_results.pkl'),
     ('Reptile-MT',      '{p}_MTML/{p}_reptile_mt',      'reptile_mt_results.pkl'),
     ('Reptile-MI',      '{p}_MTML/{p}_reptile_mi',      'reptile_mi_results.pkl'),
+    ('Reptile-MI-Dyn',  '{p}_MTML/{p}_reptile_mi_dynamic', 'reptile_mi_dynamic_results.pkl'),
 ]
 
 ALL_SCRIPTS = MTL_SCRIPTS + MTML_SCRIPTS

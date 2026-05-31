@@ -30,6 +30,7 @@ EXPERIMENTS = [
     ('MTML_baselines', 'reptile_st.py'),
     ('MTML_baselines', 'reptile_mt.py'),
     ('MTML_baselines', 'reptile_mi.py'),
+    ('MTML_baselines', 'reptile_mi_dynamic.py'),
 ]
 
 

@@ -5,3 +5,5 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 z_archive/
+build_chapter3.js
+Chapter3_updated.docx
