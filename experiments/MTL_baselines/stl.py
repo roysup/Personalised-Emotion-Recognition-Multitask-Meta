@@ -36,7 +36,6 @@ def parse_args():
                    help='Dataset to run on (default: vreed)')
     return p.parse_args()
 
-
 # =============================
 # HELPERS
 # =============================
@@ -65,7 +64,6 @@ def _train_participant(task_idx, label_type, lr, l2_lambda,
             X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b), y_b)
-            #l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
             l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad and p.ndim >= 2)
             total = loss + l2_reg
             if torch.isnan(total):
@@ -76,7 +74,6 @@ def _train_participant(task_idx, label_type, lr, l2_lambda,
             running += total.item()
         sched.step(running / len(loader))
     return model
-
 
 # =============================
 # HYPERPARAMETER TUNING
@@ -130,7 +127,6 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas,
                             X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
                             opt.zero_grad(set_to_none=True)
                             loss = lfn(model(X_b), y_b)
-                            #l2_reg = l2 * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
                             l2_reg = l2 * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad and p.ndim >= 2)
                             total = loss + l2_reg
                             total.backward()
@@ -164,7 +160,6 @@ def hyperparameter_tuning(label_type, learning_rates, l2_lambdas,
     with open(os.path.join(output_dir, f'{label_type}_tuning.pkl'), 'wb') as f:
         pickle.dump({'all': results, 'best': best}, f)
     return best['lr'], best['l2']
-
 
 # =============================
 # MAIN

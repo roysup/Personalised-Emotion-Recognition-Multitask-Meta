@@ -66,7 +66,6 @@ def _train_single(label_type, lr, l2_lambda, train_df, cfg, device):
             X_b, y_b = X_b.to(device, non_blocking=True), y_b.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(X_b), y_b)
-            #l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad)
             l2_reg = l2_lambda * sum(p.norm(2)**2 for p in model.parameters() if p.requires_grad and p.ndim >= 2)
 
             total = loss + l2_reg

@@ -72,8 +72,7 @@ def _apply_pcgrad(model, loss_fn, X_b, y_b, task_ids):
     total      = total_loss + model.compute_l2(L2_SHARED, L2_TASK)
     total.backward()
 
-    # Overwrite shared param grads with projected values,
-    # then add back L2 contribution (lost during overwrite)
+    # Overwrite shared param grads with projected values,then add back L2 contribution (lost during overwrite)
     offset = 0
     for p in shared_params:
         n = p.numel()
