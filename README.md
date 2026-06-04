@@ -366,12 +366,3 @@ All hyperparameters and train/test splits live in `src/config.py`.
 
 ---
 
-## Citation
-
-```bibtex
-@article{roy2025mtml,
-  title  = {Few-Shot Personalized Emotion Recognition from Physiological Signals with Multitask Meta-Learning},
-  author = {Roy, Supriya},
-  year   = {2025}
-}
-```
