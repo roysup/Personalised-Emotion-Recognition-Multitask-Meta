@@ -27,7 +27,7 @@ experiments/
   run_all_experiments.py
 analysis/             class_balance, mtl_roc_auc, mtl_vs_stl_gains (NTG),
                       significance_tests (Wilcoxon/McNemar), tag_analysis
-results/              outputs (not tracked)   z_archive/  retired scripts
+results/              outputs    
 ```
 
 ## Datasets
