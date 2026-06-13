@@ -1,0 +1,5 @@
+Test,AR_stat,AR_p,AR_sig,VA_stat,VA_p,VA_sig
+Mean improvement (STL→MTL),t=-1.084,0.28791797867143615,✗,t=-0.559,0.5806021506019536,✗
+Variance reduction,-5.7%,0.868079093864581,✗,-5.9%,0.7723147544352116,✗
+Baseline-gain correlation (rescue effect),r=-0.239,0.2202151570806253,✗,r=-0.281,0.1479462212494039,✗
+Low vs High baseline,t=0.266,0.7919820997088003,✗,t=1.851,0.0755948223786339,✗
