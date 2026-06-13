@@ -1,6 +1,6 @@
 # Few-Shot Personalized Emotion Recognition from Physiological Signals with Multitask Meta-Learning
 
-Personalized binary valence/arousal recognition from physiological signals (ECG, EDA, BVP), treating each user as a task. Code for the paper of the same title.
+Personalized binary valence/arousal recognition from physiological signals (ECG, EDA, BVP), treating each user as a task.
 
 ## Overview
 
@@ -71,8 +71,8 @@ All experiment scripts take `--dataset {vreed, dssn_eq, dssn_em}` (default `vree
 ```bash
 python experiments/MTL_baselines/mtl_hps.py --dataset vreed
 python experiments/TAG_analysis/tag_train.py --dataset vreed
-python experiments/MTML_baselines/reptile_mi.py --dataset dssn_em
-python experiments/run_all_experiments.py --dataset vreed   # full suite
+python experiments/MTML_baselines/reptile_mi.py --dataset vreed
+python experiments/run_all_experiments.py --dataset vreed  
 
 python experiments/collect_results.py        # -> results/results_summary.csv
 python analysis/mtl_vs_stl_gains.py --dataset vreed   # per-user NTG
@@ -84,7 +84,7 @@ Hyperparameters, dataset registry, and participant-level train/test splits are c
 
 ## Citation
 
-If you use this code or the SpaceVR dataset, please cite the paper. The SpaceVR dataset is available from the authors on request.
+If you use this code, please cite the paper.
 ```
 https://github.com/roysup/Personalised-Emotion-Recognition-Multitask-Meta
 ```
