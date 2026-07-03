@@ -206,6 +206,22 @@ def safe_perplexity(n):
     return int(max(5, min(30, n // 3)))
 
 
+def participant_palette(ids):
+    """id -> color, maximizing distinct hues. Uses the 60 qualitative colors of
+    tab20+tab20b+tab20c; falls back to a continuous map only if >60 participants
+    (avoids the color collisions of a plain 20-color tab20)."""
+    uniq = np.unique(ids)
+    base = []
+    for name in ('tab20', 'tab20b', 'tab20c'):
+        base.extend(list(plt.get_cmap(name).colors))
+    if len(uniq) <= len(base):
+        colors = base[:len(uniq)]
+    else:
+        cmap = plt.get_cmap('gist_ncar', len(uniq))
+        colors = [cmap(i) for i in range(len(uniq))]
+    return {v: colors[i] for i, v in enumerate(uniq)}
+
+
 def project_all(F_hi, methods, seed):
     Xz = StandardScaler().fit_transform(F_hi)
     out = {}
@@ -229,17 +245,17 @@ def plot_panels(embs, color_vals, title, out_png, discrete_labels=None,
     axes = axes[0]
     for ax, m in zip(axes, methods):
         e = embs[m]
-        if discrete_labels is None:  # continuous-ish (participant ids) -> tab20
-            cmap = plt.get_cmap('tab20', max(len(np.unique(color_vals)), 3))
-            for k, v in enumerate(np.unique(color_vals)):
+        if discrete_labels is None:  # participant ids -> distinct palette
+            pal = participant_palette(color_vals)
+            for v in np.unique(color_vals):
                 mk = color_vals == v
-                ax.scatter(e[mk, 0], e[mk, 1], s=16, color=cmap(k % cmap.N),
+                ax.scatter(e[mk, 0], e[mk, 1], s=8, color=pal[v],
                            alpha=0.75, linewidths=0)
         else:  # binary label legend
             palette = {0: '#3b6fb0', 1: '#c0392b'}
             for c, nm in discrete_labels.items():
                 mk = color_vals == c
-                ax.scatter(e[mk, 0], e[mk, 1], s=16, color=palette[c],
+                ax.scatter(e[mk, 0], e[mk, 1], s=8, color=palette[c],
                            alpha=0.65, linewidths=0, label=nm)
             ax.legend(loc='best', fontsize=8, frameon=True)
         if pid_labels is not None:
@@ -257,8 +273,7 @@ def plot_combined(panels, suptitle, out_png):
     """panels: list of (panel_title, emb, ids). One column per panel, colored by
     participant with a color map shared across panels."""
     all_ids = np.unique(np.concatenate([ids for _, _, ids in panels]))
-    cmap = plt.get_cmap('tab20', max(len(all_ids), 3))
-    id2c = {v: cmap(k % cmap.N) for k, v in enumerate(all_ids)}
+    id2c = participant_palette(all_ids)
 
     fig, axes = plt.subplots(1, len(panels), figsize=(6 * len(panels), 5.6),
                              squeeze=False)
@@ -266,7 +281,7 @@ def plot_combined(panels, suptitle, out_png):
     for ax, (ptitle, emb, ids) in zip(axes, panels):
         for v in np.unique(ids):
             m = ids == v
-            ax.scatter(emb[m, 0], emb[m, 1], s=14, color=id2c[v],
+            ax.scatter(emb[m, 0], emb[m, 1], s=6, color=id2c[v],
                        alpha=0.75, linewidths=0)
         ax.set_title(ptitle); ax.set_xticks([]); ax.set_yticks([])
     fig.suptitle(suptitle, fontsize=13)
