@@ -74,13 +74,15 @@ def parse_args():
                    choices=['lstm_mean', 'z2'],
                    help='default: lstm_mean (backbone tap). z2 available but not '
                         'recommended (closer to the classifier head)')
-    p.add_argument('--levels', nargs='+', default=['window', 'trial'],
+    p.add_argument('--levels', nargs='+', default=['window'],
                    choices=['window', 'trial', 'participant'],
-                   help='default: window + trial (participant level = 26 points, '
-                        'decorative)')
+                   help='default: window')
     p.add_argument('--methods', nargs='+', default=['tsne'],
                    choices=['pca', 'tsne', 'umap'],
                    help='default: tsne. Add pca for a linear sanity-check panel')
+    p.add_argument('--combined', action='store_true',
+                   help='single figure with AR and VA side by side, both colored '
+                        'by participant (shared color map). Ignores by-label panels.')
     p.add_argument('--participants', default='all', choices=['all', 'train', 'test'],
                    help='which participants to include')
     p.add_argument('--trials', default='train', choices=['all', 'train', 'test'],
@@ -251,6 +253,29 @@ def plot_panels(embs, color_vals, title, out_png, discrete_labels=None,
     print(f'[saved] {out_png}')
 
 
+def plot_combined(panels, suptitle, out_png):
+    """panels: list of (panel_title, emb, ids). One column per panel, colored by
+    participant with a color map shared across panels."""
+    all_ids = np.unique(np.concatenate([ids for _, _, ids in panels]))
+    cmap = plt.get_cmap('tab20', max(len(all_ids), 3))
+    id2c = {v: cmap(k % cmap.N) for k, v in enumerate(all_ids)}
+
+    fig, axes = plt.subplots(1, len(panels), figsize=(6 * len(panels), 5.6),
+                             squeeze=False)
+    axes = axes[0]
+    for ax, (ptitle, emb, ids) in zip(axes, panels):
+        for v in np.unique(ids):
+            m = ids == v
+            ax.scatter(emb[m, 0], emb[m, 1], s=14, color=id2c[v],
+                       alpha=0.75, linewidths=0)
+        ax.set_title(ptitle); ax.set_xticks([]); ax.set_yticks([])
+    fig.suptitle(suptitle, fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(out_png, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f'[saved] {out_png}')
+
+
 # ------------------------------------------------------------------
 def main():
     args = parse_args()
@@ -269,10 +294,44 @@ def main():
     if not HAS_UMAP and 'umap' in args.methods:
         print('[info] umap-learn not installed — UMAP panels skipped.')
 
+    # feature dict per label (each label uses its own P-STL model)
+    feats_by_label = {}
+    for label in labels:
+        net = load_pstl(cfg, args.ckpt_path, args.dataset, label, device)
+        feats_by_label[label] = extract_feats(net, X, device)
+
+    method = 't-SNE' if 'tsne' in args.methods else args.methods[0].upper()
+
+    if args.combined:
+        # one figure: AR and VA side by side, both colored by participant
+        for feat_name in args.features:
+            for level in args.levels:
+                panels = []
+                for label in labels:
+                    y = y_ar if label == 'ar' else y_va
+                    F_hi, ids, _ = aggregate(feats_by_label[label][feat_name],
+                                             pid, trial, y, level)
+                    if len(F_hi) < 3:
+                        print(f'[skip] {label}/{feat_name}/{level}: too few points')
+                        continue
+                    emb = project_all(F_hi, args.methods, args.seed)[method]
+                    panels.append((f'{label.upper()} (n={len(F_hi)})', emb, ids))
+                if not panels:
+                    continue
+                out = os.path.join(
+                    outdir, f'{args.dataset}_{level}_{feat_name}_'
+                            f'{"-".join(l.upper() for l in labels)}_by_participant.png')
+                plot_combined(
+                    panels,
+                    f'{args.dataset.upper()} · {level} · {feat_name} · {method} '
+                    f'— colored by participant',
+                    out)
+        print(f'\n[done] figures in {outdir}')
+        return
+
     for label in labels:
         y = y_ar if label == 'ar' else y_va
-        net = load_pstl(cfg, args.ckpt_path, args.dataset, label, device)
-        feats = extract_feats(net, X, device)
+        feats = feats_by_label[label]
 
         for feat_name in args.features:
             for level in args.levels:
