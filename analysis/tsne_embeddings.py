@@ -70,12 +70,17 @@ def parse_args():
     p = argparse.ArgumentParser(description='P-STL t-SNE/PCA/UMAP embedding figures')
     p.add_argument('--dataset', default='vreed', choices=['vreed', 'dssn_eq', 'dssn_em'])
     p.add_argument('--label', default='both', choices=['ar', 'va', 'both'])
-    p.add_argument('--features', nargs='+', default=['lstm_mean', 'z2'],
-                   choices=['lstm_mean', 'z2'])
-    p.add_argument('--levels', nargs='+', default=['window', 'trial', 'participant'],
-                   choices=['window', 'trial', 'participant'])
-    p.add_argument('--methods', nargs='+', default=['pca', 'tsne', 'umap'],
-                   choices=['pca', 'tsne', 'umap'])
+    p.add_argument('--features', nargs='+', default=['lstm_mean'],
+                   choices=['lstm_mean', 'z2'],
+                   help='default: lstm_mean (backbone tap). z2 available but not '
+                        'recommended (closer to the classifier head)')
+    p.add_argument('--levels', nargs='+', default=['window', 'trial'],
+                   choices=['window', 'trial', 'participant'],
+                   help='default: window + trial (participant level = 26 points, '
+                        'decorative)')
+    p.add_argument('--methods', nargs='+', default=['tsne'],
+                   choices=['pca', 'tsne', 'umap'],
+                   help='default: tsne. Add pca for a linear sanity-check panel')
     p.add_argument('--participants', default='all', choices=['all', 'train', 'test'],
                    help='which participants to include')
     p.add_argument('--trials', default='train', choices=['all', 'train', 'test'],
