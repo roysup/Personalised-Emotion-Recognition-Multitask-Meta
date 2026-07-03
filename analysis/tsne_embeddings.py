@@ -1,37 +1,37 @@
 """
-t-SNE / UMAP embedding visualization — motivation figure for personalization.
+P-STL embedding visualization (t-SNE / PCA / UMAP) — motivation figure.
 
-Projects each participant's windowed physiological segments to 2-D and produces
-two side-by-side panels for the same points:
+Replicates the *process* of the Colab similarity-analysis notebook, but built on
+the repository's own components instead of ad-hoc code:
 
-    (left)  colored by PARTICIPANT   — if points cluster by user, that visually
-                                        motivates modeling each user as a task.
-    (right) colored by EMOTION LABEL  — shows how weakly the raw/shared feature
-                                        space separates the target label.
+    * P-STL model      -> src/models.SingleTaskModel (the trained population model),
+                          loaded from results/<PREFIX>_MTL/<PREFIX>_pstl_results/
+                          model_{ar,va}.pth  (falls back to random init if absent).
+    * data / windowing -> dataset_configs.loader.load_dataset + data.create_sliding_windows
+    * splits           -> src/config participant + per-user trial splits.
 
-Choice of feature space (--features):
-    pstl     — features from the trained POPULATION model (P-STL SingleTaskModel,
-               64-d pooled representation). BEST fit for the "why personalize?"
-               argument: if the non-personalized population model still organizes
-               its feature space by participant rather than by emotion, that
-               directly motivates STL/MTL personalization over P-STL.
-    backbone — features from the shared MTML CNN-LSTM backbone (BaseFeatureExtractor).
-               Supports the secondary point that residual per-user structure
-               survives parameter sharing (justifying per-user heads / adaptation).
-    raw      — flattened raw windows (model-agnostic). Shows the data itself is
-               user-structured, independent of any trained model.
+For each emotion label (AR / VA) it runs every windowed segment through the
+population model and taps two 64-d representations:
+    lstm_mean : pooled LSTM output (the backbone representation)
+    z2        : activation after the second dense layer (one layer from the output)
 
-IMPORTANT (reviewer-safe usage): t-SNE/UMAP distances, cluster sizes and gaps are
-NOT metric-meaningful. Use these plots only for the qualitative "clusters by user"
-point, and always report perplexity/seed. Nothing quantitative should be read off
-the axes.
+These are aggregated to window / trial / participant level and projected to 2-D
+with PCA, t-SNE and (optionally) UMAP. Each projection is drawn TWICE for the same
+points — colored by participant and colored by emotion label — so the panels answer
+"does the population feature space cluster by user, or by emotion?".
+
+By default it embeds the TRAIN trials of ALL users (the exact data P-STL was fit
+on), which is the most conservative basis for the personalization argument.
+
+NOTE: t-SNE/UMAP distances and cluster sizes are NOT metric-meaningful; use only
+for the qualitative "clusters by user" reading. Report perplexity/seed. This script
+does NO similarity-metric computation — visualization only.
 
 Examples
 --------
-    python analysis/tsne_embeddings.py --dataset vreed --label ar               # P-STL features (default)
-    python analysis/tsne_embeddings.py --dataset dssn_em --label va --method umap
-    python analysis/tsne_embeddings.py --dataset vreed --label ar --features raw
-    python analysis/tsne_embeddings.py --dataset vreed --label ar --features backbone
+    python analysis/tsne_embeddings.py --dataset vreed
+    python analysis/tsne_embeddings.py --dataset vreed --label ar --levels window trial
+    python analysis/tsne_embeddings.py --dataset dssn_em --features lstm_mean
 """
 import argparse
 import os
@@ -42,231 +42,207 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, 'src'))
 sys.path.insert(0, os.path.join(_REPO_ROOT, 'datasets'))
 
 import numpy as np
+import pandas as pd
 import torch
+import torch.nn.functional as F
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 
 from data import create_sliding_windows
 from dataset_configs.loader import load_dataset
-from models import BaseFeatureExtractor, SingleTaskModel
+from models import SingleTaskModel
+
+try:
+    import umap
+    HAS_UMAP = True
+except Exception:
+    HAS_UMAP = False
+
+_PREFIX = {'vreed': 'VREED', 'dssn_eq': 'DSSN_EQ', 'dssn_em': 'DSSN_EM'}
 
 
-# ------------------------------------------------------------------
-# args
 # ------------------------------------------------------------------
 def parse_args():
-    p = argparse.ArgumentParser(description='t-SNE / UMAP embedding figure')
-    p.add_argument('--dataset', type=str, default='vreed',
-                   choices=['vreed', 'dssn_eq', 'dssn_em'])
-    p.add_argument('--label', type=str, default='ar', choices=['ar', 'va'],
-                   help='which emotion label to color the right panel by')
-    p.add_argument('--features', type=str, default='pstl',
-                   choices=['pstl', 'backbone', 'raw'],
-                   help='"pstl" = population model features (default; best for the '
-                        'personalization argument), "backbone" = shared MTML '
-                        'CNN-LSTM features, "raw" = flattened windows')
-    p.add_argument('--ckpt-path', type=str, default='auto',
-                   help='path to a model checkpoint, or "auto" to locate the '
-                        'P-STL / MI checkpoint for the chosen --features, or '
-                        '"init" for random init')
-    p.add_argument('--method', type=str, default='tsne',
-                   choices=['tsne', 'umap'])
-    p.add_argument('--perplexity', type=float, default=30.0)
-    p.add_argument('--max-per-user', type=int, default=60,
-                   help='cap windows per participant (balance + tractability)')
-    p.add_argument('--participants', type=str, default='all',
-                   choices=['all', 'train', 'test'],
-                   help='which PARTICIPANTS to include (train = users P-STL/MTML '
-                        'were fit on; test = held-out unseen users)')
-    p.add_argument('--trials', type=str, default='all',
-                   choices=['all', 'train', 'test'],
-                   help='within each participant, which TRIALS to window '
-                        '(train = support trials the models were fit on; '
-                        'test = held-out query trials)')
+    p = argparse.ArgumentParser(description='P-STL t-SNE/PCA/UMAP embedding figures')
+    p.add_argument('--dataset', default='vreed', choices=['vreed', 'dssn_eq', 'dssn_em'])
+    p.add_argument('--label', default='both', choices=['ar', 'va', 'both'])
+    p.add_argument('--features', nargs='+', default=['lstm_mean', 'z2'],
+                   choices=['lstm_mean', 'z2'])
+    p.add_argument('--levels', nargs='+', default=['window', 'trial', 'participant'],
+                   choices=['window', 'trial', 'participant'])
+    p.add_argument('--methods', nargs='+', default=['pca', 'tsne', 'umap'],
+                   choices=['pca', 'tsne', 'umap'])
+    p.add_argument('--participants', default='all', choices=['all', 'train', 'test'],
+                   help='which participants to include')
+    p.add_argument('--trials', default='train', choices=['all', 'train', 'test'],
+                   help='within each participant, which trials to window '
+                        '(default: train = the data P-STL was fit on)')
+    p.add_argument('--ckpt-path', default='auto',
+                   help='P-STL checkpoint path, "auto" to locate model_{label}.pth, '
+                        'or "init" for random init')
+    p.add_argument('--max-per-user', type=int, default=0,
+                   help='cap windows/user (0 = use all)')
     p.add_argument('--seed', type=int, default=42)
-    p.add_argument('--outdir', type=str, default=None)
+    p.add_argument('--outdir', default=None)
     return p.parse_args()
 
 
 # ------------------------------------------------------------------
-# data -> windows
+# data -> windows  (train trials of the selected users)
 # ------------------------------------------------------------------
-def build_windows(df, cfg, which='all', trials='all', max_per_user=60, seed=42):
-    """Return X (N, win, C), y_ar, y_va, user_ids, aligned per participant.
-
-    `which`  selects participants (all/train/test).
-    `trials` selects, within each participant, which trials to window
-             (all / train-support / test-query), via cfg['splits'][uid].
-    """
+def build_windows(df, cfg, which, trials, max_per_user, seed):
     rng = np.random.default_rng(seed)
-    all_ids = cfg['participant_ids']
     if which == 'train':
         keep = set(cfg['train_participants'])
     elif which == 'test':
         keep = set(cfg['test_participants'])
     else:
-        keep = set(all_ids)
+        keep = set(cfg['participant_ids'])
 
-    Xs, yar, yva, uids = [], [], [], []
-    for uid in all_ids:
+    Xs, yar, yva, pids, tids = [], [], [], [], []
+    for uid in cfg['participant_ids']:
         if uid not in keep:
             continue
         sub = df[df['ID'] == uid].reset_index(drop=True)
         if trials in ('train', 'test') and uid in cfg['splits']:
-            keep_trials = cfg['splits'][uid][trials]
-            sub = sub[sub['Trial'].isin(keep_trials)].reset_index(drop=True)
+            sub = sub[sub['Trial'].isin(cfg['splits'][uid][trials])].reset_index(drop=True)
         if len(sub) == 0:
             continue
-        X, y_ar, y_va, _, _ = create_sliding_windows(
+        X, y_ar, y_va, task_ids, trial_ids = create_sliding_windows(
             sub, cfg['window_size'], cfg['stride'],
             task_id=uid, feature_cols=cfg['feature_cols'])
         if len(X) == 0:
             continue
-        if len(X) > max_per_user:
+        if max_per_user and len(X) > max_per_user:
             idx = rng.choice(len(X), max_per_user, replace=False)
-            X, y_ar, y_va = X[idx], y_ar[idx], y_va[idx]
-        Xs.append(X)
-        yar.append(y_ar)
-        yva.append(y_va)
-        uids.append(np.full(len(X), uid, dtype=np.int64))
+            X, y_ar, y_va, trial_ids = X[idx], y_ar[idx], y_va[idx], trial_ids[idx]
+        Xs.append(X); yar.append(y_ar); yva.append(y_va)
+        pids.append(np.full(len(X), uid, dtype=np.int64))
+        tids.append(trial_ids.astype(np.int64))
 
     if not Xs:
         raise RuntimeError('No windows built — check dataset/splits.')
-    return (np.concatenate(Xs), np.concatenate(yar),
-            np.concatenate(yva), np.concatenate(uids))
-
-
-def _binarize(y):
-    """Ratings are typically already {0,1}; otherwise median-split."""
-    u = np.unique(y)
-    if len(u) <= 2:
-        return (y > (u.min() if len(u) == 1 else np.mean(u))).astype(int)
-    return (y > np.median(y)).astype(int)
+    return (np.concatenate(Xs), np.concatenate(yar).astype(int),
+            np.concatenate(yva).astype(int), np.concatenate(pids),
+            np.concatenate(tids))
 
 
 # ------------------------------------------------------------------
-# features
+# P-STL feature taps  (lstm_mean and z2)
 # ------------------------------------------------------------------
-_PREFIX = {'vreed': 'VREED', 'dssn_eq': 'DSSN_EQ', 'dssn_em': 'DSSN_EM'}
-
-
-def resolve_ckpt_path(arg, features, dataset, label):
-    if arg != 'auto':
-        return arg
-    prefix = _PREFIX[dataset]
-    if features == 'pstl':
-        cand = os.path.join(_REPO_ROOT, 'results', f'{prefix}_MTL',
-                            f'{prefix}_pstl_results', f'model_{label}.pth')
-    else:  # backbone (MTML MI)
-        cand = os.path.join(_REPO_ROOT, 'results', f'{prefix}_MTML',
-                            f'{prefix}_reptile_mi', f'reptile_mi_base_{label}.pth')
-    return cand if os.path.exists(cand) else 'init'
-
-
-def _pstl_features(net, x):
-    """Pooled 64-d representation from SingleTaskModel (forward up to torch.mean)."""
-    import torch.nn.functional as F
-    x = x.permute(0, 2, 1)
-    x = F.relu(net.bn1(net.conv1(x))); x = net.pool1(x)
-    x = F.relu(net.bn2(net.conv2(x))); x = net.pool2(x)
-    x = x.permute(0, 2, 1)
-    x, _ = net.lstm(x)
-    return torch.mean(x, dim=1)
-
-
-def extract_features(X, cfg, features, ckpt_path, dataset, label, device):
-    if features == 'raw':
-        return X.reshape(len(X), -1).astype(np.float32)
-
-    path = resolve_ckpt_path(ckpt_path, features, dataset, label)
-    if features == 'pstl':
-        net = SingleTaskModel(input_dim=cfg['input_dim']).to(device)
-        fwd = _pstl_features
-    else:
-        net = BaseFeatureExtractor(input_dim=cfg['input_dim']).to(device)
-        fwd = lambda n, x: n(x)
-
-    if path != 'init' and os.path.exists(path):
-        state = torch.load(path, map_location=device)
+def load_pstl(cfg, ckpt_path, dataset, label, device):
+    net = SingleTaskModel(input_dim=cfg['input_dim']).to(device)
+    if ckpt_path == 'auto':
+        prefix = _PREFIX[dataset]
+        ckpt_path = os.path.join(_REPO_ROOT, 'results', f'{prefix}_MTL',
+                                 f'{prefix}_pstl_results', f'model_{label}.pth')
+    if ckpt_path != 'init' and os.path.exists(ckpt_path):
+        state = torch.load(ckpt_path, map_location=device)
         state = state.get('state_dict', state) if isinstance(state, dict) else state
         net.load_state_dict(state, strict=False)
-        print(f'[features] loaded {features} checkpoint: {path}')
+        print(f'[pstl:{label}] loaded checkpoint: {ckpt_path}')
     else:
-        print(f'[features] WARNING: no {features} checkpoint found — using RANDOM '
-              'INIT. Pass --features raw or a valid --ckpt-path for a meaningful plot.')
+        print(f'[pstl:{label}] WARNING: no checkpoint — using RANDOM INIT '
+              f'({ckpt_path}). Plot will not reflect a trained model.')
     net.eval()
+    return net
 
-    feats, bs = [], 256
+
+def extract_feats(net, X, device, bs=256):
+    """Return dict with 'lstm_mean' (N,64) and 'z2' (N,64)."""
     xt = torch.from_numpy(X.astype(np.float32))
+    lstm_mean, z2 = [], []
     with torch.no_grad():
         for i in range(0, len(xt), bs):
-            feats.append(fwd(net, xt[i:i + bs].to(device)).cpu().numpy())
-    return np.concatenate(feats).astype(np.float32)
+            x = xt[i:i + bs].to(device)
+            x = x.permute(0, 2, 1)
+            x = F.relu(net.bn1(net.conv1(x))); x = net.pool1(x)
+            x = F.relu(net.bn2(net.conv2(x))); x = net.pool2(x)
+            x = x.permute(0, 2, 1)
+            x, _ = net.lstm(x)
+            h = torch.mean(x, dim=1)                 # lstm_mean (64)
+            z = F.relu(net.dense2(F.relu(net.dense1(h))))  # z2 (64)
+            lstm_mean.append(h.cpu().numpy())
+            z2.append(z.cpu().numpy())
+    return {'lstm_mean': np.concatenate(lstm_mean),
+            'z2': np.concatenate(z2)}
 
 
 # ------------------------------------------------------------------
-# projection
+# aggregation: window / trial / participant
 # ------------------------------------------------------------------
-def project(F, method, perplexity, seed):
-    # standardize before projection
-    mu, sd = F.mean(0, keepdims=True), F.std(0, keepdims=True) + 1e-8
-    F = (F - mu) / sd
-    if method == 'umap':
-        try:
-            import umap
-        except ImportError:
-            raise SystemExit('umap-learn not installed. pip install umap-learn '
-                             '--break-system-packages, or use --method tsne.')
-        reducer = umap.UMAP(n_components=2, random_state=seed,
-                            n_neighbors=15, min_dist=0.1)
-        return reducer.fit_transform(F)
-    from sklearn.manifold import TSNE
-    perp = min(perplexity, max(5, (len(F) - 1) / 3.0))
-    tsne = TSNE(n_components=2, perplexity=perp, init='pca',
-                learning_rate='auto', random_state=seed)
-    return tsne.fit_transform(F)
+def aggregate(feat, pid, trial, label, level):
+    """Return (F matrix, pid array, label array) at the requested level."""
+    if level == 'window':
+        return feat, pid, label
+    cols = [f'f{i}' for i in range(feat.shape[1])]
+    d = pd.DataFrame(feat, columns=cols)
+    d['pid'], d['trial'], d['label'] = pid, trial, label.astype(float)
+    keys = ['pid', 'trial'] if level == 'trial' else ['pid']
+    g = d.groupby(keys, as_index=False).agg({**{c: 'mean' for c in cols},
+                                             'label': 'mean'})
+    return (g[cols].to_numpy(np.float32),
+            g['pid'].to_numpy(np.int64),
+            (g['label'].to_numpy() >= 0.5).astype(int))
 
 
 # ------------------------------------------------------------------
-# plot
+# projections + plotting
 # ------------------------------------------------------------------
-def plot(emb, user_ids, label_bin, args, cfg, out_png):
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    users = sorted(np.unique(user_ids))
-    cmap = plt.get_cmap('tab20', max(len(users), 3))
-    u2c = {u: cmap(i % cmap.N) for i, u in enumerate(users)}
+def safe_perplexity(n):
+    if n <= 5:
+        return max(2, n - 1)
+    return int(max(5, min(30, n // 3)))
 
-    # left: by participant
-    for u in users:
-        m = user_ids == u
-        axes[0].scatter(emb[m, 0], emb[m, 1], s=14, color=u2c[u],
-                        alpha=0.7, linewidths=0)
-    axes[0].set_title(f'Colored by participant (n={len(users)})')
 
-    # right: by label
-    lname = args.label.upper()
-    colors = {0: '#3b6fb0', 1: '#c0392b'}
-    names = {0: f'{lname} low (0)', 1: f'{lname} high (1)'}
-    for c in (0, 1):
-        m = label_bin == c
-        axes[1].scatter(emb[m, 0], emb[m, 1], s=14, color=colors[c],
-                        alpha=0.6, linewidths=0, label=names[c])
-    axes[1].set_title(f'Colored by {lname} label')
-    axes[1].legend(loc='best', frameon=True, fontsize=9)
+def project_all(F_hi, methods, seed):
+    Xz = StandardScaler().fit_transform(F_hi)
+    out = {}
+    if 'pca' in methods and Xz.shape[1] >= 2:
+        out['PCA'] = PCA(n_components=2, random_state=seed).fit_transform(Xz)
+    if 'tsne' in methods:
+        out['t-SNE'] = TSNE(n_components=2, perplexity=safe_perplexity(len(Xz)),
+                            init='pca', learning_rate='auto',
+                            random_state=seed).fit_transform(Xz)
+    if 'umap' in methods and HAS_UMAP:
+        out['UMAP'] = umap.UMAP(n_components=2, n_neighbors=15, min_dist=0.1,
+                                random_state=seed).fit_transform(Xz)
+    return out
 
-    method = args.method.upper()
-    for ax in axes:
-        ax.set_xlabel(f'{method}-1')
-        ax.set_ylabel(f'{method}-2')
-        ax.set_xticks([]); ax.set_yticks([])
-    fig.suptitle(
-        f'{args.dataset.upper()} — {method} of {args.features} features '
-        f'(perplexity={args.perplexity:g}, seed={args.seed})',
-        fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+def plot_panels(embs, color_vals, title, out_png, discrete_labels=None,
+                pid_labels=None):
+    methods = list(embs.keys())
+    fig, axes = plt.subplots(1, len(methods), figsize=(5 * len(methods), 4.8),
+                             squeeze=False)
+    axes = axes[0]
+    for ax, m in zip(axes, methods):
+        e = embs[m]
+        if discrete_labels is None:  # continuous-ish (participant ids) -> tab20
+            cmap = plt.get_cmap('tab20', max(len(np.unique(color_vals)), 3))
+            for k, v in enumerate(np.unique(color_vals)):
+                mk = color_vals == v
+                ax.scatter(e[mk, 0], e[mk, 1], s=16, color=cmap(k % cmap.N),
+                           alpha=0.75, linewidths=0)
+        else:  # binary label legend
+            palette = {0: '#3b6fb0', 1: '#c0392b'}
+            for c, nm in discrete_labels.items():
+                mk = color_vals == c
+                ax.scatter(e[mk, 0], e[mk, 1], s=16, color=palette[c],
+                           alpha=0.65, linewidths=0, label=nm)
+            ax.legend(loc='best', fontsize=8, frameon=True)
+        if pid_labels is not None:
+            for x, y, pid in zip(e[:, 0], e[:, 1], pid_labels):
+                ax.text(x, y, str(pid), fontsize=6, ha='center', va='center')
+        ax.set_title(m); ax.set_xticks([]); ax.set_yticks([])
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(out_png, dpi=200, bbox_inches='tight')
+    plt.close(fig)
     print(f'[saved] {out_png}')
 
 
@@ -275,39 +251,45 @@ def main():
     args = parse_args()
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    labels = ['ar', 'va'] if args.label == 'both' else [args.label]
+
+    outdir = args.outdir or os.path.join(_REPO_ROOT, 'results', 'embedding_plots')
+    os.makedirs(outdir, exist_ok=True)
 
     df, cfg = load_dataset(args.dataset, mode='mtml')
-    X, y_ar, y_va, user_ids = build_windows(
-        df, cfg, which=args.participants, trials=args.trials,
-        max_per_user=args.max_per_user, seed=args.seed)
-    print(f'[data] {len(X)} windows from {len(np.unique(user_ids))} participants '
-          f'(participants={args.participants}, trials={args.trials}), shape={X.shape}')
+    X, y_ar, y_va, pid, trial = build_windows(
+        df, cfg, args.participants, args.trials, args.max_per_user, args.seed)
+    print(f'[data] {len(X)} windows | {len(np.unique(pid))} participants | '
+          f'participants={args.participants} trials={args.trials} | shape={X.shape}')
+    if not HAS_UMAP and 'umap' in args.methods:
+        print('[info] umap-learn not installed — UMAP panels skipped.')
 
-    y = y_ar if args.label == 'ar' else y_va
-    label_bin = _binarize(y)
+    for label in labels:
+        y = y_ar if label == 'ar' else y_va
+        net = load_pstl(cfg, args.ckpt_path, args.dataset, label, device)
+        feats = extract_feats(net, X, device)
 
-    F = extract_features(X, cfg, args.features, args.ckpt_path,
-                         args.dataset, args.label, device)
-    emb = project(F, args.method, args.perplexity, args.seed)
+        for feat_name in args.features:
+            for level in args.levels:
+                F_hi, ids, lab = aggregate(feats[feat_name], pid, trial, y, level)
+                if len(F_hi) < 3:
+                    print(f'[skip] {label}/{feat_name}/{level}: too few points ({len(F_hi)})')
+                    continue
+                embs = project_all(F_hi, args.methods, args.seed)
+                base = f'{args.dataset}_{label}_{level}_{feat_name}'
+                title = (f'{args.dataset.upper()} · {label.upper()} · {level} · '
+                         f'{feat_name} (n={len(F_hi)})')
+                # participant labels only useful at participant level
+                plabels = ids if level == 'participant' else None
+                plot_panels(embs, ids, title + ' — by participant',
+                            os.path.join(outdir, base + '_by_participant.png'),
+                            discrete_labels=None, pid_labels=plabels)
+                plot_panels(embs, lab, title + f' — by {label.upper()} label',
+                            os.path.join(outdir, base + '_by_label.png'),
+                            discrete_labels={0: f'{label.upper()} low',
+                                             1: f'{label.upper()} high'})
 
-    outdir = args.outdir or os.path.join(_REPO_ROOT, 'results',
-                                         'embedding_plots')
-    os.makedirs(outdir, exist_ok=True)
-    out_png = os.path.join(
-        outdir, f'{args.dataset}_{args.method}_{args.features}_{args.label}'
-                f'_p-{args.participants}_t-{args.trials}.png')
-    plot(emb, user_ids, label_bin, args, cfg, out_png)
-
-    # quick quantitative sanity check (silhouette by user vs by label)
-    try:
-        from sklearn.metrics import silhouette_score
-        if len(np.unique(user_ids)) > 1:
-            s_user = silhouette_score(emb, user_ids)
-            s_lab = silhouette_score(emb, label_bin)
-            print(f'[silhouette] by user = {s_user:.3f} | by {args.label} label = {s_lab:.3f}')
-            print('  (higher by-user than by-label supports the personalization motivation)')
-    except Exception as e:
-        print(f'[silhouette] skipped: {e}')
+    print(f'\n[done] figures in {outdir}')
 
 
 if __name__ == '__main__':
