@@ -70,6 +70,14 @@ PKL_MAP = {
 }
 
 
+# dataset prefix -> display name used in plot titles
+DISPLAY_NAMES = {
+    'DSSN_EQ': 'SpaceVR-EQ',
+    'DSSN_EM': 'SpaceVR-EM',
+    'VREED':   'VREED',
+}
+
+
 def load_predictions(model_name, model_dir):
     """Return {'ar': {'y_true': ..., 'y_probs': ...}, 'va': {...}} or None."""
     preds = {'ar': None, 'va': None}
@@ -107,38 +115,6 @@ def compute_auc(data):
     fpr, tpr, _ = roc_curve(data['y_true'], data['y_probs'])
     return fpr, tpr, auc(fpr, tpr)
 
-
-# def plot_roc(all_predictions, task, save_path, prefix):
-    plt.figure(figsize=(10, 8))
-    summary = []
-
-    for model_name in COLORS:
-        pred = all_predictions.get(model_name, {}).get(task.lower())
-        fpr, tpr, roc_auc = compute_auc(pred)
-        if fpr is None:
-            print(f'  Skipping {model_name} {task} (no valid data)')
-            continue
-        plt.plot(fpr, tpr,
-                 label=f'{model_name} (AUC = {roc_auc:.3f})',
-                 color=COLORS[model_name],
-                 linestyle=LINE_STYLES[model_name],
-                 linewidth=2.5)
-        print(f'  {model_name} {task} AUC: {roc_auc:.4f}')
-        summary.append({'Model': model_name, 'AUC': roc_auc,
-                        'N': len(pred['y_true'])})
-
-    plt.plot([0, 1], [0, 1], 'k--', linewidth=1.3, label='Random')
-    task_full = 'Arousal' if task == 'AR' else 'Valence'
-    plt.xlabel('False Positive Rate', fontsize=14)
-    plt.ylabel('True Positive Rate', fontsize=14)
-    plt.title(f'ROC Curves — {task_full} ({prefix})', fontsize=16, fontweight='bold')
-    plt.legend(loc='lower right', fontsize=12)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
-    print(f'  ✓ Saved: {save_path}')
-    return summary
 
 def plot_roc(all_predictions, task, save_path, prefix):
     plt.rcParams.update({
@@ -195,8 +171,10 @@ def plot_roc(all_predictions, task, save_path, prefix):
     ax.set_xlabel('False Positive Rate')
     ax.set_ylabel('True Positive Rate')
 
+    dataset_name = DISPLAY_NAMES.get(prefix, prefix)
+
     ax.set_title(
-        f'ROC Curves for {task_full} Classification ({prefix})',
+        f'ROC Curves for {task_full} Classification ({dataset_name})',
         fontweight='bold'
     )
 
