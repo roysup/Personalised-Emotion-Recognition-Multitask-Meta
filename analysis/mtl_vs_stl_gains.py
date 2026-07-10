@@ -222,7 +222,7 @@ if __name__ == '__main__':
     ax.set_ylabel('Accuracy Gain (%)')
 
     ax.set_title(
-        f'MTL vs STL Accuracy Gain per Participant ({prefix})',
+        f'MTL vs STL Accuracy Gain per Participant',
         fontweight='bold'
     )
 
