@@ -240,7 +240,7 @@ def project_all(F_hi, methods, seed):
 def plot_panels(embs, color_vals, title, out_png, discrete_labels=None,
                 pid_labels=None):
     methods = list(embs.keys())
-    fig, axes = plt.subplots(1, len(methods), figsize=(5 * len(methods), 4.8),
+    fig, axes = plt.subplots(1, len(methods), figsize=(4 * len(methods), 3.8),
                              squeeze=False)
     axes = axes[0]
     for ax, m in zip(axes, methods):
@@ -261,8 +261,9 @@ def plot_panels(embs, color_vals, title, out_png, discrete_labels=None,
         if pid_labels is not None:
             for x, y, pid in zip(e[:, 0], e[:, 1], pid_labels):
                 ax.text(x, y, str(pid), fontsize=6, ha='center', va='center')
-        ax.set_xticks([]); ax.set_yticks([])
-    fig.tight_layout()
+        ax.set_title(m); ax.set_xticks([]); ax.set_yticks([])
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(out_png, dpi=200, bbox_inches='tight')
     plt.close(fig)
     print(f'[saved] {out_png}')
@@ -274,7 +275,7 @@ def plot_combined(panels, suptitle, out_png):
     all_ids = np.unique(np.concatenate([ids for _, _, ids in panels]))
     id2c = participant_palette(all_ids)
 
-    fig, axes = plt.subplots(1, len(panels), figsize=(6 * len(panels), 5.6),
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.8 * len(panels), 4.5),
                              squeeze=False)
     axes = axes[0]
     for ax, (ptitle, emb, ids) in zip(axes, panels):
@@ -283,7 +284,8 @@ def plot_combined(panels, suptitle, out_png):
             ax.scatter(emb[m, 0], emb[m, 1], s=6, color=id2c[v],
                        alpha=0.75, linewidths=0)
         ax.set_title(ptitle); ax.set_xticks([]); ax.set_yticks([])
-    fig.tight_layout()
+    fig.suptitle(suptitle, fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(out_png, dpi=200, bbox_inches='tight')
     plt.close(fig)
     print(f'[saved] {out_png}')
